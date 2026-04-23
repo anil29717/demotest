@@ -1,0 +1,445 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  BROKER
+  BUYER
+  SELLER
+  NRI
+  HNI
+  INSTITUTIONAL_SELLER
+  INSTITUTIONAL_BUYER
+  ADMIN
+}
+
+enum OrgRole {
+  ADMIN
+  AGENT
+  VIEWER
+}
+
+enum PropertyType {
+  RESIDENTIAL
+  COMMERCIAL
+  PLOT
+  INSTITUTIONAL
+}
+
+enum DealType {
+  SALE
+  RENT
+}
+
+enum LeadStatus {
+  HOT
+  WARM
+  COLD
+  CONVERTED
+  LOST
+}
+
+enum Urgency {
+  IMMEDIATE
+  WITHIN_30_DAYS
+  FLEXIBLE
+}
+
+enum MatchStatus {
+  ACTIVE
+  VIEWED
+  ACCEPTED
+  REJECTED
+}
+
+enum DealStage {
+  LEAD
+  REQUIREMENT
+  MATCH
+  SITE_VISIT
+  NEGOTIATION
+  LEGAL
+  LOAN
+  INSURANCE
+  PAYMENT
+  CLOSURE
+}
+
+model User {
+  id         String   @id @default(cuid())
+  phoneHash  String   @unique
+  phoneEnc   String?
+  email      String?
+  name       String?
+  role       UserRole @default(BUYER)
+  trustScore Float    @default(0)
+  verified   Boolean  @default(false)
+  notificationPrefs   Json?
+  onboardingStep      String?
+  serviceAreas        String[] @default([])
+  reraId              String?
+  reputationScore     Float    @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  organizationMembers OrganizationMember[]
+  savedSearches       SavedSearch[]
+  properties          Property[]
+  requirements        Requirement[]
+  leadsOwned          Lead[]               @relation("LeadOwner")
+  leadNotes           LeadNote[]
+  leadFollowUps       LeadFollowUp[]
+  institutionsPosted  Institution[]
+  ndas                Nda[]
+  activityLogs        ActivityLog[]
+  notifications       Notification[]
+  documentsUploaded   Document[]
+  reviewsGiven        Review[]             @relation("ReviewAuthor")
+  reviewsReceived     Review[]             @relation("ReviewTarget")
+  nriProfile          NriProfile?
+  hniProfile          HniProfile?
+  investorPreference InvestorPreference?
+}
+
+model Organization {
+  id         String   @id @default(cuid())
+  name       String
+  reraNumber String?
+  gstNumber  String?
+  createdAt  DateTime @default(now())
+
+  members    OrganizationMember[]
+  leads           Lead[]
+  deals           Deal[]
+  properties      Property[]
+  serviceRequests ServiceRequest[]
+}
+
+model OrganizationMember {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String
+  role           OrgRole
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+}
+
+model Property {
+  id               String       @id @default(cuid())
+  organizationId   String?
+  postedById       String
+  title            String
+  description      String?
+  propertyType     PropertyType
+  dealType         DealType
+  price            Decimal      @db.Decimal(18, 2)
+  areaSqft         Float
+  city             String
+  areaPublic       String
+  localityPublic   String
+  addressPrivate   String
+  latitude         Float
+  longitude        Float
+  trustScore       Float        @default(0)
+  status           String       @default("active")
+  distressedLabel  String       @default("standard")
+  isBankAuction    Boolean      @default(false)
+  imageUrls        String[]     @default([])
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  postedBy     User          @relation(fields: [postedById], references: [id])
+  matches      Match[]
+  deals        Deal[]
+  reviews      Review[]
+}
+
+model Requirement {
+  id           String       @id @default(cuid())
+  userId       String
+  budgetMin    Decimal      @db.Decimal(18, 2)
+  budgetMax    Decimal      @db.Decimal(18, 2)
+  city         String
+  areas        String[]
+  propertyType PropertyType
+  dealType     DealType
+  areaSqftMin  Float
+  areaSqftMax  Float
+  urgency      Urgency
+  tag          String       @default("WARM")
+  active       Boolean      @default(true)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id])
+  matches Match[]
+  deals   Deal[]
+}
+
+model Match {
+  id            String      @id @default(cuid())
+  propertyId    String
+  requirementId String
+  matchScore    Float
+  matchFactors  Json
+  status        MatchStatus @default(ACTIVE)
+  hotMatch      Boolean     @default(false)
+  createdAt     DateTime    @default(now())
+
+  property    Property    @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  requirement Requirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, requirementId])
+}
+
+model Deal {
+  id               String    @id @default(cuid())
+  organizationId   String
+  propertyId       String?
+  institutionId    String?
+  requirementId    String
+  stage            DealStage
+  valueInr         Decimal?  @db.Decimal(18, 2)
+  slaBreachCount   Int       @default(0)
+  dealHealthScore  Float?    @default(50)
+  stageEnteredAt   DateTime  @default(now())
+  institutionalStage Int?
+  coBrokerInviteEmail String?
+  commissionSplitPct  Float?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  property     Property?    @relation(fields: [propertyId], references: [id])
+  institution  Institution? @relation(fields: [institutionId], references: [id])
+  requirement  Requirement  @relation(fields: [requirementId], references: [id])
+  documents    Document[]
+  serviceReqs  ServiceRequest[]
+}
+
+model Lead {
+  id             String     @id @default(cuid())
+  organizationId String
+  ownerId        String
+  leadName       String
+  phoneEnc       String?
+  source         String
+  status         LeadStatus
+  pipelineStage  String?
+  propertyId     String?
+  institutionId  String?
+  requirementId  String?
+  createdAt      DateTime   @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  owner        User         @relation("LeadOwner", fields: [ownerId], references: [id])
+  notes        LeadNote[]
+  followUps    LeadFollowUp[]
+}
+
+model LeadNote {
+  id         String   @id @default(cuid())
+  leadId      String
+  userId      String
+  body        String
+  createdAt   DateTime @default(now())
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model LeadFollowUp {
+  id           String   @id @default(cuid())
+  leadId        String
+  userId        String
+  dueAt         DateTime
+  note          String?
+  completed     Boolean  @default(false)
+  completedAt   DateTime?
+  createdAt     DateTime @default(now())
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Institution {
+  id                   String   @id @default(cuid())
+  postedById           String
+  institutionName      String
+  institutionType      String
+  city                 String
+  maskedSummary        String?
+  askingPriceCr        Decimal  @db.Decimal(18, 4)
+  studentEnrollment    Int?
+  latitude             Float
+  longitude            Float
+  confidential         Boolean  @default(true)
+  ndaRequired          Boolean  @default(true)
+  verificationStatus   String   @default("unverified")
+  dealScore            Float    @default(0)
+  createdAt            DateTime @default(now())
+
+  postedBy  User       @relation(fields: [postedById], references: [id])
+  ndas      Nda[]
+  deals     Deal[]
+  documents Document[]
+}
+
+model Nda {
+  id            String    @id @default(cuid())
+  userId        String
+  institutionId String
+  status        String
+  signedAt      DateTime?
+  ipAddress     String?
+
+  user        User        @relation(fields: [userId], references: [id])
+  institution Institution @relation(fields: [institutionId], references: [id])
+
+  @@unique([userId, institutionId])
+}
+
+model Document {
+  id              String   @id @default(cuid())
+  dealId          String?
+  institutionId   String?
+  type            String
+  storageKey      String
+  uploadedById    String
+  version         Int      @default(1)
+  accessLevel     String
+  downloadAllowed Boolean  @default(false)
+  createdAt       DateTime @default(now())
+
+  deal        Deal?        @relation(fields: [dealId], references: [id])
+  institution Institution? @relation(fields: [institutionId], references: [id])
+  uploadedBy  User         @relation(fields: [uploadedById], references: [id])
+}
+
+model ActivityLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  action     String
+  entityType String
+  entityId   String
+  metadata   Json?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  channel   String
+  title     String
+  body      String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+model Partner {
+  id        String   @id @default(cuid())
+  type      String
+  name      String
+  verified  Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model ServiceRequest {
+  id             String   @id @default(cuid())
+  organizationId String
+  dealId         String?
+  type           String
+  status         String   @default("open")
+  partnerId      String?
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  deal         Deal?        @relation(fields: [dealId], references: [id])
+}
+
+model NriProfile {
+  userId           String  @id
+  country          String?
+  assignedManager  String?
+  serviceNotes     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model HniProfile {
+  userId        String @id
+  ticketMinCr   Float?
+  ticketMaxCr   Float?
+  preferences   Json?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model AuctionListing {
+  id          String   @id @default(cuid())
+  source      String
+  title       String
+  city        String
+  auctionDate DateTime?
+  emdAmount   Decimal? @db.Decimal(18, 2)
+  startPrice  Decimal? @db.Decimal(18, 2)
+  metadata    Json?
+  createdAt   DateTime @default(now())
+}
+
+model WhatsAppIngest {
+  id         String   @id @default(cuid())
+  rawPayload Json
+  intent     String?
+  leadId     String?
+  createdAt  DateTime @default(now())
+}
+
+/** Module 38 — IRM basics */
+model InvestorPreference {
+  userId       String   @id
+  assetClasses String[] @default([])
+  minTicketCr  Float?
+  maxTicketCr  Float?
+  geography    String[] @default([])
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+/** Saved property searches (Module 28) */
+model SavedSearch {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  filters   Json
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Review {
+  id           String   @id @default(cuid())
+  reviewerId   String
+  targetUserId String
+  propertyId   String?
+  rating       Int
+  comment      String?
+  status       String   @default("pending")
+  createdAt    DateTime @default(now())
+
+  reviewer User      @relation("ReviewAuthor", fields: [reviewerId], references: [id], onDelete: Cascade)
+  target   User      @relation("ReviewTarget", fields: [targetUserId], references: [id], onDelete: Cascade)
+  property Property? @relation(fields: [propertyId], references: [id], onDelete: SetNull)
+}

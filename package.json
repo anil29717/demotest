@@ -1,0 +1,22 @@
+{
+  "name": "ar-buildwel",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "postinstall": "npm run build --workspace=@ar-buildwel/shared",
+    "dev:web": "npm run dev --workspace=web",
+    "dev:web:clean": "npm run clean --workspace=web && npm run dev --workspace=web",
+    "dev:api": "npm run start:dev --workspace=api",
+    "build": "npm run build --workspaces --if-present",
+    "db:up": "docker compose -f infra/docker-compose.yml up -d",
+    "db:down": "docker compose -f infra/docker-compose.yml down",
+    "prisma:generate": "npm run prisma:generate --workspace=api",
+    "prisma:migrate": "npm run prisma:migrate --workspace=api"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

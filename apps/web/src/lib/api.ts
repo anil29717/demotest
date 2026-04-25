@@ -14,12 +14,24 @@ export async function apiFetch<T>(
 ): Promise<T> {
   const { token, ...rest } = init ?? {};
   const headers = new Headers(rest.headers);
-  headers.set("Content-Type", "application/json");
+  if (!headers.has("Content-Type") && rest.body != null) {
+    headers.set("Content-Type", "application/json");
+  }
   if (token) headers.set("Authorization", `Bearer ${token}`);
   const res = await fetch(apiUrl(path), { ...rest, headers });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(text || res.statusText);
   }
-  return res.json() as Promise<T>;
+
+  if (res.status === 204) {
+    return undefined as T;
+  }
+
+  const text = await res.text();
+  if (!text.trim()) {
+    return undefined as T;
+  }
+
+  return JSON.parse(text) as T;
 }

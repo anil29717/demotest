@@ -6,7 +6,9 @@ export class InstitutionsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async publicPreview(institutionId: string) {
-    const row = await this.prisma.institution.findUnique({ where: { id: institutionId } });
+    const row = await this.prisma.institution.findUnique({
+      where: { id: institutionId },
+    });
     if (!row) throw new NotFoundException();
     return {
       id: row.id,
@@ -40,22 +42,31 @@ export class InstitutionsService {
   }
 
   async detailForUser(institutionId: string, userId: string) {
+    const row = await this.prisma.institution.findUnique({
+      where: { id: institutionId },
+    });
+    if (!row) throw new NotFoundException();
+
+    if (!row.ndaRequired) {
+      return {
+        ...row,
+        locked: false,
+      };
+    }
+
     const nda = await this.prisma.nda.findUnique({
       where: {
         userId_institutionId: { userId, institutionId },
       },
     });
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    /** Phase 1: NDA signed unlocks full record for demo; tighten with verified buyer + admin gate in production */
+    /** Phase 1: NDA signed + qualified role/verification unlocks full record. */
     const canSee =
       nda?.status === 'signed' &&
       (user?.role === 'INSTITUTIONAL_BUYER' ||
         user?.role === 'ADMIN' ||
         user?.role === 'BROKER' ||
         !!user?.verified);
-
-    const row = await this.prisma.institution.findUnique({ where: { id: institutionId } });
-    if (!row) throw new NotFoundException();
 
     if (!canSee) {
       return {
@@ -74,6 +85,27 @@ export class InstitutionsService {
     return {
       ...row,
       locked: false,
+    };
+  }
+
+  /** Module 22 — institutional DD pack outline (template; evidence uploads Phase 2). */
+  async ddPackOutline(institutionId: string) {
+    const row = await this.prisma.institution.findUnique({
+      where: { id: institutionId },
+      select: { id: true, institutionType: true, city: true },
+    });
+    if (!row) throw new NotFoundException();
+    return {
+      institutionId: row.id,
+      institutionType: row.institutionType,
+      city: row.city,
+      sections: [
+        { id: 'governance', label: 'Governance & accreditation', items: [] as string[] },
+        { id: 'financials', label: 'Audited financials (3y)', items: [] as string[] },
+        { id: 'legal', label: 'Title / lease / encumbrance', items: [] as string[] },
+        { id: 'operations', label: 'Operations & enrollment', items: [] as string[] },
+      ],
+      note: 'Structured pack scaffold; attach evidence in Phase 2 data room workflows.',
     };
   }
 }

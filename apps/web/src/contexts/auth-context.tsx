@@ -31,6 +31,7 @@ type AuthContextValue = {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 const STORAGE_KEY = "accessToken";
+const COOKIE_KEY = "accessToken";
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setTokenState] = useState<string | null>(null);
@@ -40,8 +41,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const setToken = useCallback((t: string | null) => {
     setTokenState(t);
     if (typeof window === "undefined") return;
-    if (t) localStorage.setItem(STORAGE_KEY, t);
-    else localStorage.removeItem(STORAGE_KEY);
+    if (t) {
+      localStorage.setItem(STORAGE_KEY, t);
+      document.cookie = `${COOKIE_KEY}=${encodeURIComponent(t)}; path=/; samesite=lax`;
+    } else {
+      localStorage.removeItem(STORAGE_KEY);
+      document.cookie = `${COOKIE_KEY}=; path=/; max-age=0; samesite=lax`;
+    }
   }, []);
 
   const refreshProfile = useCallback(async () => {
@@ -61,6 +67,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (typeof window === "undefined") return;
     const t = localStorage.getItem(STORAGE_KEY);
     setTokenState(t);
+    if (t) {
+      document.cookie = `${COOKIE_KEY}=${encodeURIComponent(t)}; path=/; samesite=lax`;
+    }
     setReady(true);
   }, []);
 

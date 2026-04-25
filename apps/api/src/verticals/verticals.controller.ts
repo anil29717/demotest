@@ -1,10 +1,19 @@
 import { Body, Controller, Get, Post, Put, UseGuards } from '@nestjs/common';
+import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtPayloadUser } from '../common/decorators/current-user.decorator';
+import { Roles } from '../common/decorators/roles.decorator';
+import { RolesGuard } from '../common/guards/roles.guard';
 import { PrismaService } from '../prisma/prisma.service';
 import { Type } from 'class-transformer';
-import { IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Min,
+} from 'class-validator';
 
 class CreateAuctionDto {
   @IsString()
@@ -61,33 +70,44 @@ export class VerticalsController {
   /** Public: bank auction inventory (Phase 1 manual seed) */
   @Get('auctions')
   auctions() {
-    return this.prisma.auctionListing.findMany({ orderBy: { createdAt: 'desc' }, take: 50 });
+    return this.prisma.auctionListing.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
   }
 
   @Get('nri/profile')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.NRI)
   nriProfile(@CurrentUser() user: JwtPayloadUser) {
     return this.prisma.nriProfile.findUnique({ where: { userId: user.sub } });
   }
 
   @Put('nri/profile')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.NRI)
   async upsertNri(@CurrentUser() user: JwtPayloadUser, @Body() dto: NriDto) {
     return this.prisma.nriProfile.upsert({
       where: { userId: user.sub },
-      create: { userId: user.sub, country: dto.country, assignedManager: dto.assignedManager },
+      create: {
+        userId: user.sub,
+        country: dto.country,
+        assignedManager: dto.assignedManager,
+      },
       update: { country: dto.country, assignedManager: dto.assignedManager },
     });
   }
 
   @Get('hni/profile')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.HNI)
   hniProfile(@CurrentUser() user: JwtPayloadUser) {
     return this.prisma.hniProfile.findUnique({ where: { userId: user.sub } });
   }
 
   @Put('hni/profile')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.HNI)
   async upsertHni(@CurrentUser() user: JwtPayloadUser, @Body() dto: HniDto) {
     return this.prisma.hniProfile.upsert({
       where: { userId: user.sub },
@@ -104,7 +124,8 @@ export class VerticalsController {
   }
 
   @Post('auctions')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.BROKER)
   async createAuction(@Body() body: CreateAuctionDto) {
     return this.prisma.auctionListing.create({
       data: {

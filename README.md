@@ -133,9 +133,12 @@ Set **`NEXT_PUBLIC_API_URL`** to your API origin (default local: `http://localho
 ```bash
 npm run prisma:generate
 npm run prisma:migrate
+npm run prisma:seed --workspace=api
 ```
 
 Migrations: **`apps/api/prisma/migrations`**.
+
+Demo seed: **`apps/api/prisma/seed.ts`** inserts an upsert-safe Phase 1 prototype dataset (users, orgs, listings, requirements, matches, leads, deals, notifications, institutions/NDA, fraud, services, reviews, and profiles). Re-running the seed updates the same demo records.
 
 ### Run the apps
 

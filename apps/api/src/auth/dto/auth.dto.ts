@@ -20,3 +20,9 @@ export class VerifyOtpDto {
   @IsEnum(UserRole)
   role?: UserRole;
 }
+
+/** One-shot demo login; only active when API env DEMO_LOGIN=true */
+export class DevLoginDto {
+  @IsEnum(UserRole)
+  role!: UserRole;
+}

@@ -1,21 +1,81 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+@import url("https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@700,800&f[]=satoshi@400,500&display=swap");
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --lux-cream: #fdfcf9;
+  --lux-charcoal: #1a1a1a;
+  --lux-taupe: #8b7d6b;
+  --lux-gold: #d4af37;
+  --lux-card-radius: 24px;
+  --lux-button-radius: 12px;
+  --lux-taupe-border: rgba(139, 125, 107, 0.2);
 }
 
 body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  color: var(--lux-charcoal);
+  background: var(--lux-cream);
+  font-family: "Satoshi", "Cabinet Grotesk", Arial, Helvetica, sans-serif;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: "Cabinet Grotesk", "Satoshi", Arial, Helvetica, sans-serif;
+}
+
+.lux-section {
+  padding-top: 6rem;
+  padding-bottom: 6rem;
+}
+
+.lux-card {
+  border-radius: var(--lux-card-radius);
+  border: 1px solid var(--lux-taupe-border);
+}
+
+.lux-button {
+  border-radius: var(--lux-button-radius);
+  transition: transform 300ms ease, opacity 300ms ease;
+}
+
+.lux-button:hover {
+  opacity: 0.9;
+  transform: scale(1.02);
+}
+
+.lux-image-frame {
+  overflow: hidden;
+}
+
+.lux-image {
+  transition: transform 500ms ease-in-out;
+}
+
+.lux-image-frame:hover .lux-image {
+  transform: scale(1.05);
+}
+
+.nav-underline {
+  position: relative;
+}
+
+.nav-underline::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -5px;
+  width: 0;
+  height: 1px;
+  background: var(--lux-charcoal);
+  transform: translateX(-50%);
+  transition: width 250ms ease;
+}
+
+.nav-underline:hover::after {
+  width: 100%;
 }

@@ -11,7 +11,8 @@ export class LeadsService {
       const member = await this.prisma.organizationMember.findFirst({
         where: { userId, organizationId },
       });
-      if (!member) throw new BadRequestException('Not a member of organization');
+      if (!member)
+        throw new BadRequestException('Not a member of organization');
       return organizationId;
     }
     const first = await this.prisma.organizationMember.findFirst({
@@ -22,16 +23,32 @@ export class LeadsService {
     return first?.organizationId ?? null;
   }
 
-  async createFromMatchIfBroker(property: Property, req: Requirement, score: number) {
+  async createFromMatchIfBroker(
+    property: Property,
+    req: Requirement,
+    score: number,
+  ) {
     if (!property.organizationId) return null;
 
     const orgId = property.organizationId;
+    const existing = await this.prisma.lead.findFirst({
+      where: {
+        organizationId: orgId,
+        propertyId: property.id,
+        requirementId: req.id,
+      },
+      select: { id: true },
+    });
+    if (existing) return null;
+
     const owner = await this.prisma.organizationMember.findFirst({
       where: { organizationId: orgId, role: 'ADMIN' },
     });
     const ownerId = owner?.userId ?? property.postedById;
 
-    const buyer = await this.prisma.user.findUnique({ where: { id: req.userId } });
+    const buyer = await this.prisma.user.findUnique({
+      where: { id: req.userId },
+    });
 
     return this.prisma.lead.create({
       data: {
@@ -71,8 +88,12 @@ export class LeadsService {
       requirementId?: string;
     },
   ) {
-    const organizationId = await this.resolveOrganizationId(userId, dto.organizationId);
-    if (!organizationId) throw new BadRequestException('Organization not found');
+    const organizationId = await this.resolveOrganizationId(
+      userId,
+      dto.organizationId,
+    );
+    if (!organizationId)
+      throw new BadRequestException('Organization not found');
     return this.prisma.lead.create({
       data: {
         organizationId,
@@ -91,7 +112,12 @@ export class LeadsService {
   async updateLead(
     userId: string,
     id: string,
-    dto: { status?: LeadStatus; pipelineStage?: string; leadName?: string; source?: string },
+    dto: {
+      status?: LeadStatus;
+      pipelineStage?: string;
+      leadName?: string;
+      source?: string;
+    },
   ) {
     const lead = await this.prisma.lead.findUnique({ where: { id } });
     if (!lead) throw new BadRequestException('Lead not found');
@@ -122,7 +148,12 @@ export class LeadsService {
     });
   }
 
-  async addFollowUp(userId: string, leadId: string, dueAt: Date, note?: string) {
+  async addFollowUp(
+    userId: string,
+    leadId: string,
+    dueAt: Date,
+    note?: string,
+  ) {
     const lead = await this.prisma.lead.findUnique({ where: { id: leadId } });
     if (!lead) throw new BadRequestException('Lead not found');
     const org = await this.resolveOrganizationId(userId, lead.organizationId);

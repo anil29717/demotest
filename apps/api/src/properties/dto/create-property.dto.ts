@@ -9,6 +9,7 @@ import {
   IsOptional,
   IsString,
   IsUrl,
+  Max,
   MaxLength,
   Min,
 } from 'class-validator';
@@ -42,26 +43,34 @@ export class CreatePropertyDto {
 
   @IsString()
   @IsNotEmpty()
+  @MaxLength(120)
   city!: string;
 
   @IsString()
   @IsNotEmpty()
+  @MaxLength(120)
   areaPublic!: string;
 
   @IsString()
   @IsNotEmpty()
+  @MaxLength(120)
   localityPublic!: string;
 
   @IsString()
   @IsNotEmpty()
+  @MaxLength(500)
   addressPrivate!: string;
 
   @Type(() => Number)
   @IsNumber()
+  @Min(-90)
+  @Max(90)
   latitude!: number;
 
   @Type(() => Number)
   @IsNumber()
+  @Min(-180)
+  @Max(180)
   longitude!: number;
 
   @IsOptional()

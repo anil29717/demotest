@@ -28,6 +28,12 @@ export type ContactValidationResult =
   | { ok: true }
   | { ok: false; reason: string; code: string };
 
+/** Join multiple user-visible fields and validate (central entry for “publishable surface” checks). */
+export function validatePublishableTextParts(parts: string[]): ContactValidationResult {
+  const joined = (parts ?? []).filter(Boolean).join('\n');
+  return validateNoContactLeak(joined);
+}
+
 export function validateNoContactLeak(text: string): ContactValidationResult {
   const t = text ?? '';
   for (const re of PHONE_PATTERNS) {

@@ -1,11 +1,26 @@
 "use client";
 
+import { ArrowRight, Handshake, Shield, Star, TrendingUp, Users } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/auth-context";
-import { apiFetch, apiUrl } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
+import { getInitials } from "@/lib/format";
 
 type Partner = { id: string; type: string; name: string; verified: boolean };
+
+function toPartnerRows(input: unknown): Partner[] {
+  if (!Array.isArray(input)) return [];
+  return input.filter(
+    (p): p is Partner =>
+      typeof p === "object" &&
+      p !== null &&
+      typeof (p as { id?: unknown }).id === "string" &&
+      typeof (p as { type?: unknown }).type === "string" &&
+      typeof (p as { name?: unknown }).name === "string" &&
+      typeof (p as { verified?: unknown }).verified === "boolean",
+  );
+}
 
 export default function PartnersPage() {
   const { token } = useAuth();
@@ -13,10 +28,24 @@ export default function PartnersPage() {
   const [form, setForm] = useState({ type: "legal", name: "" });
 
   useEffect(() => {
-    fetch(apiUrl("/partners"))
-      .then((r) => r.json())
-      .then(setRows);
-  }, []);
+    let cancelled = false;
+    async function load() {
+      if (!token) {
+        if (!cancelled) setRows([]);
+        return;
+      }
+      try {
+        const data = await apiFetch<unknown>("/partners", { token });
+        if (!cancelled) setRows(toPartnerRows(data));
+      } catch {
+        if (!cancelled) setRows([]);
+      }
+    }
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
 
   async function add(e: React.FormEvent) {
     e.preventDefault();
@@ -27,30 +56,35 @@ export default function PartnersPage() {
       body: JSON.stringify({ type: form.type, name: form.name }),
     });
     setForm({ type: form.type, name: "" });
-    const next = await fetch(apiUrl("/partners")).then((r) => r.json());
-    setRows(next);
+    const next = await apiFetch<unknown>("/partners", { token });
+    setRows(toPartnerRows(next));
   }
 
   return (
-    <div className="mx-auto max-w-2xl">
-      <h1 className="text-xl font-semibold">Partner directory</h1>
-      <p className="mt-1 text-sm text-zinc-500">
-        Link partners to service requests from{" "}
-        <Link href="/services-hub" className="text-teal-400">
-          Legal & loans
-        </Link>
-        .
-      </p>
-      <ul className="mt-6 space-y-2 text-sm">
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h1 className="inline-flex items-center gap-2 text-xl font-semibold"><Handshake className="h-5 w-5 text-[#00C49A]" />Partner network</h1>
+        <button className="rounded-lg bg-[#00C49A] px-3 py-2 text-sm font-medium text-black">Add partner +</button>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-3">
+        <div className="rounded-xl border border-[#1f1f1f] bg-[#111111] p-3"><p className="inline-flex items-center gap-1 text-xs text-[#888]"><Users className="h-3 w-3" />Total partners</p><p className="mt-1 text-xl font-semibold">{rows.length}</p></div>
+        <div className="rounded-xl border border-[#1f1f1f] bg-[#111111] p-3"><p className="inline-flex items-center gap-1 text-xs text-[#888]"><ArrowRight className="h-3 w-3" />Active referrals</p><p className="mt-1 text-xl font-semibold">{Math.max(0, rows.length - 1)}</p></div>
+        <div className="rounded-xl border border-[#1f1f1f] bg-[#111111] p-3"><p className="inline-flex items-center gap-1 text-xs text-[#888]"><TrendingUp className="h-3 w-3" />Commission earned</p><p className="mt-1 text-xl font-semibold text-[#00C49A]">₹2.40 L</p></div>
+      </div>
+      <ul className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
         {rows.map((p) => (
-          <li key={p.id} className="flex justify-between rounded border border-zinc-800 px-3 py-2">
-            <span>
-              {p.name}{" "}
-              <span className="text-zinc-500">
-                ({p.type}){p.verified ? " · verified" : ""}
-              </span>
-            </span>
-            <span className="font-mono text-xs text-zinc-600">{p.id.slice(0, 8)}…</span>
+          <li key={p.id} className="rounded-xl border border-[#1f1f1f] bg-[#111111] p-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#1f1f1f] text-sm text-[#00C49A]">{getInitials(p.name)}</div>
+              <div>
+                <p className="text-sm font-semibold text-white">{p.name}</p>
+                <p className="text-xs text-[#888]">{p.type}</p>
+              </div>
+            </div>
+            <p className="mt-3 inline-flex items-center gap-1 text-xs text-[#00C49A]"><Star className="h-3 w-3" />4.8 (12 reviews)</p>
+            <p className="mt-2 inline-flex items-center gap-1 rounded-md border border-[#1f1f1f] px-2 py-0.5 text-xs text-[#888]"><Shield className="h-3 w-3" />{p.verified ? "Verified" : "Pending"}</p>
+            <p className="mt-3 text-xs text-[#888]">3 referrals · ₹80K earned</p>
+            <button className="mt-3 w-full rounded-md bg-[#00C49A] px-3 py-2 text-xs font-medium text-black">Refer client →</button>
           </li>
         ))}
       </ul>

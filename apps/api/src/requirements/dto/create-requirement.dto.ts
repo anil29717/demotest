@@ -6,7 +6,6 @@ import {
   IsNotEmpty,
   IsNumber,
   IsString,
-  MaxLength,
   Min,
 } from 'class-validator';
 import { DealType, PropertyType, Urgency } from '@prisma/client';

@@ -1,9 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Calendar, MessageSquare, MoreHorizontal, UserPlus, Users } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { apiFetch } from "@/lib/api";
+import { timeAgo } from "@/lib/format";
+import { PageSkeleton } from "@/components/ui/skeleton";
 
 type Lead = {
   id: string;
@@ -23,20 +27,22 @@ export default function CrmPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [selected, setSelected] = useState<Lead | null>(null);
   const [newLead, setNewLead] = useState({ leadName: "", source: "manual", stage: "LEAD" });
+  const [showAdd, setShowAdd] = useState(false);
   const [note, setNote] = useState("");
   const [followupAt, setFollowupAt] = useState("");
   const [followupNote, setFollowupNote] = useState("");
 
-  const load = useCallback(() => {
-    if (!token) return;
-    apiFetch<Lead[]>("/leads", { token })
-      .then(setLeads)
-      .catch(() => setLeads([]));
-  }, [token]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const { isLoading } = useQuery({
+    queryKey: ["leads", token],
+    enabled: Boolean(token),
+    queryFn: async () => {
+      const data = await apiFetch<Lead[]>("/leads?limit=20&offset=0", { token: token ?? undefined }).catch(
+        () => [],
+      );
+      setLeads(data);
+      return true;
+    },
+  });
 
   async function createLead(e: React.FormEvent) {
     e.preventDefault();
@@ -51,7 +57,8 @@ export default function CrmPage() {
       }),
     });
     setNewLead({ leadName: "", source: "manual", stage: "LEAD" });
-    load();
+    const refreshed = await apiFetch<Lead[]>("/leads?limit=20&offset=0", { token });
+    setLeads(refreshed);
   }
 
   async function moveLead(id: string, stage: string) {
@@ -61,7 +68,8 @@ export default function CrmPage() {
       token,
       body: JSON.stringify({ pipelineStage: stage }),
     });
-    load();
+    const refreshed = await apiFetch<Lead[]>("/leads?limit=20&offset=0", { token });
+    setLeads(refreshed);
   }
 
   async function addNote(e: React.FormEvent) {
@@ -73,7 +81,7 @@ export default function CrmPage() {
       body: JSON.stringify({ body: note }),
     });
     setNote("");
-    const refreshed = await apiFetch<Lead[]>("/leads", { token });
+    const refreshed = await apiFetch<Lead[]>("/leads?limit=20&offset=0", { token });
     setLeads(refreshed);
     setSelected(refreshed.find((l) => l.id === selected.id) ?? null);
   }
@@ -88,7 +96,7 @@ export default function CrmPage() {
     });
     setFollowupAt("");
     setFollowupNote("");
-    const refreshed = await apiFetch<Lead[]>("/leads", { token });
+    const refreshed = await apiFetch<Lead[]>("/leads?limit=20&offset=0", { token });
     setLeads(refreshed);
     setSelected(refreshed.find((l) => l.id === selected.id) ?? null);
   }
@@ -102,12 +110,27 @@ export default function CrmPage() {
       </p>
     );
 
+  if (isLoading) {
+    return (
+      <div className="grid grid-cols-6 gap-4">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <PageSkeleton key={i} count={2} type="card" />
+        ))}
+      </div>
+    );
+  }
+
   return (
     <div>
-      <h1 className="text-2xl font-semibold">CRM leads</h1>
-      <p className="mt-1 text-sm text-zinc-500">Kanban + notes + follow-up scheduling.</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="inline-flex items-center gap-2 text-2xl font-semibold"><Users className="h-6 w-6 text-[#00C49A]" />CRM leads</h1>
+          <p className="mt-1 text-sm text-zinc-500">Kanban + notes + follow-up scheduling</p>
+        </div>
+        <button type="button" onClick={() => setShowAdd((v) => !v)} className="inline-flex items-center gap-2 rounded-lg bg-[#00C49A] px-3 py-2 text-sm font-medium text-black"><UserPlus className="h-4 w-4" />Add lead +</button>
+      </div>
 
-      <form onSubmit={createLead} className="mt-6 flex flex-wrap items-end gap-2 text-sm">
+      {showAdd && <form onSubmit={createLead} className="mt-6 flex flex-wrap items-end gap-2 rounded-xl border border-[#00C49A30] bg-[#0f0f0f] p-4 text-sm">
         <label>
           Name
           <input
@@ -141,7 +164,7 @@ export default function CrmPage() {
         <button type="submit" className="rounded bg-teal-600 px-4 py-2 text-white">
           Add lead
         </button>
-      </form>
+      </form>}
 
       <div className="mt-6 grid gap-3 lg:grid-cols-3">
         {STAGES.map((stage) => (
@@ -161,9 +184,15 @@ export default function CrmPage() {
                       className="w-full text-left"
                     >
                       <p className="text-zinc-100">{l.leadName}</p>
-                      <p className="text-xs text-zinc-500">{l.source}</p>
+                      <p className="text-xs text-zinc-500">{l.source} · {timeAgo(l.createdAt)}</p>
                     </button>
-                    <div className="mt-2 flex flex-wrap gap-1">
+                    <div className="mt-2 flex items-center justify-between gap-1">
+                      <span className="inline-flex items-center gap-2 text-zinc-500">
+                        <MessageSquare className="h-3.5 w-3.5" />
+                        <Calendar className="h-3.5 w-3.5" />
+                        <MoreHorizontal className="h-3.5 w-3.5" />
+                      </span>
+                      <div className="flex flex-wrap gap-1">
                       {STAGES.map((s) => (
                         <button
                           key={s}
@@ -174,6 +203,7 @@ export default function CrmPage() {
                           {s}
                         </button>
                       ))}
+                      </div>
                     </div>
                   </li>
                 ))}

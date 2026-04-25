@@ -24,7 +24,10 @@ export class MatchingService {
     private readonly leads: LeadsService,
   ) {}
 
-  private scorePair(property: Property, req: Requirement): { score: number; factors: MatchFactors } {
+  private scorePair(
+    property: Property,
+    req: Requirement,
+  ): { score: number; factors: MatchFactors } {
     const loc =
       property.city.toLowerCase() === req.city.toLowerCase() &&
       req.areas.some(
@@ -41,18 +44,27 @@ export class MatchingService {
     const bmin = Number(req.budgetMin);
     const bmax = Number(req.budgetMax);
     const budget =
-      price >= bmin && price <= bmax ? 100 : price < bmin ? Math.max(0, 100 - (bmin - price) / bmin * 100) : Math.max(0, 100 - (price - bmax) / bmax * 50);
+      price >= bmin && price <= bmax
+        ? 100
+        : price < bmin
+          ? Math.max(0, 100 - ((bmin - price) / bmin) * 100)
+          : Math.max(0, 100 - ((price - bmax) / bmax) * 50);
 
     const propertyType = property.propertyType === req.propertyType ? 100 : 0;
     const dealType = property.dealType === req.dealType ? 100 : 0;
 
     const sq =
-      property.areaSqft >= req.areaSqftMin && property.areaSqft <= req.areaSqftMax
+      property.areaSqft >= req.areaSqftMin &&
+      property.areaSqft <= req.areaSqftMax
         ? 100
         : 50;
 
     const urgency: number =
-      req.urgency === Urgency.IMMEDIATE ? 100 : req.urgency === Urgency.WITHIN_30_DAYS ? 70 : 40;
+      req.urgency === Urgency.IMMEDIATE
+        ? 100
+        : req.urgency === Urgency.WITHIN_30_DAYS
+          ? 70
+          : 40;
 
     const factors: MatchFactors = {
       location: loc * MATCH_WEIGHTS.location,
@@ -79,17 +91,27 @@ export class MatchingService {
   }
 
   async runForProperty(propertyId: string) {
-    const property = await this.prisma.property.findUnique({ where: { id: propertyId } });
+    const property = await this.prisma.property.findUnique({
+      where: { id: propertyId },
+    });
     if (!property) return;
-    const reqs = await this.prisma.requirement.findMany({ where: { active: true } });
+    const reqs = await this.prisma.requirement.findMany({
+      where: { active: true },
+    });
     for (const req of reqs) {
       await this.upsertMatch(property, req);
     }
-    await this.redis.setJson(`match:property:${propertyId}`, { updatedAt: new Date().toISOString() }, 300);
+    await this.redis.setJson(
+      `match:property:${propertyId}`,
+      { updatedAt: new Date().toISOString() },
+      300,
+    );
   }
 
   async runForRequirement(requirementId: string) {
-    const req = await this.prisma.requirement.findUnique({ where: { id: requirementId } });
+    const req = await this.prisma.requirement.findUnique({
+      where: { id: requirementId },
+    });
     if (!req) return;
     const props = await this.prisma.property.findMany({
       where: { status: 'active' },
@@ -97,7 +119,11 @@ export class MatchingService {
     for (const property of props) {
       await this.upsertMatch(property, req);
     }
-    await this.redis.setJson(`match:requirement:${requirementId}`, { updatedAt: new Date().toISOString() }, 300);
+    await this.redis.setJson(
+      `match:requirement:${requirementId}`,
+      { updatedAt: new Date().toISOString() },
+      300,
+    );
   }
 
   private async upsertMatch(property: Property, req: Requirement) {
@@ -108,7 +134,10 @@ export class MatchingService {
 
     const match = await this.prisma.match.upsert({
       where: {
-        propertyId_requirementId: { propertyId: property.id, requirementId: req.id },
+        propertyId_requirementId: {
+          propertyId: property.id,
+          requirementId: req.id,
+        },
       },
       create: {
         propertyId: property.id,
@@ -124,8 +153,16 @@ export class MatchingService {
       },
     });
 
-    await this.leads.createFromMatchIfBroker(property, req, score);
-    await this.notifications.notifyMatch(property, req, score, hotMatch);
+    try {
+      await this.leads.createFromMatchIfBroker(property, req, score);
+    } catch {
+      // Non-blocking side-effect: matching should still persist even if lead sync fails.
+    }
+    try {
+      await this.notifications.notifyMatch(property, req, score, hotMatch);
+    } catch {
+      // Non-blocking side-effect: matching should still persist even if notification fails.
+    }
 
     return match;
   }
@@ -134,7 +171,17 @@ export class MatchingService {
     return this.prisma.match.findMany({
       where: { propertyId },
       orderBy: { matchScore: 'desc' },
-      include: { requirement: { select: { id: true, city: true, tag: true, budgetMin: true, budgetMax: true } } },
+      include: {
+        requirement: {
+          select: {
+            id: true,
+            city: true,
+            tag: true,
+            budgetMin: true,
+            budgetMax: true,
+          },
+        },
+      },
     });
   }
 
@@ -201,10 +248,17 @@ export class MatchingService {
   async updateStatus(userId: string, matchId: string, status: MatchStatus) {
     const row = await this.prisma.match.findUnique({
       where: { id: matchId },
-      include: { property: { select: { postedById: true } }, requirement: { select: { userId: true } } },
+      include: {
+        property: { select: { postedById: true } },
+        requirement: { select: { userId: true } },
+      },
     });
     if (!row) return null;
-    if (row.property.postedById !== userId && row.requirement.userId !== userId) return null;
-    return this.prisma.match.update({ where: { id: matchId }, data: { status } });
+    if (row.property.postedById !== userId && row.requirement.userId !== userId)
+      return null;
+    return this.prisma.match.update({
+      where: { id: matchId },
+      data: { status },
+    });
   }
 }

@@ -1,4 +1,8 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { createHash, randomInt } from 'crypto';
@@ -18,6 +22,16 @@ function phoneHash(phone: string): string {
   return createHash('sha256').update(normalizePhone(phone)).digest('hex');
 }
 
+const SELF_SIGNUP_ROLES: ReadonlySet<UserRole> = new Set([
+  UserRole.BROKER,
+  UserRole.BUYER,
+  UserRole.SELLER,
+  UserRole.NRI,
+  UserRole.HNI,
+  UserRole.INSTITUTIONAL_BUYER,
+  UserRole.INSTITUTIONAL_SELLER,
+]);
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -27,6 +41,11 @@ export class AuthService {
     private readonly config: ConfigService,
   ) {}
 
+  private resolveSignupRole(role?: UserRole): UserRole {
+    if (!role) return UserRole.BUYER;
+    return SELF_SIGNUP_ROLES.has(role) ? role : UserRole.BUYER;
+  }
+
   async requestOtp(phone: string) {
     const hash = phoneHash(phone);
     const otp =
@@ -35,13 +54,12 @@ export class AuthService {
         : String(randomInt(100000, 999999));
     await this.redis.redis.setex(`otp:${hash}`, 600, otp);
     if (this.config.get<string>('OTP_DEV_MODE') === 'true') {
-      // eslint-disable-next-line no-console
       console.log(`[OTP DEV] ${normalizePhone(phone)} -> ${otp}`);
     }
     return { ok: true, message: 'OTP sent' };
   }
 
-  async verifyOtp(phone: string, otp: string, role: UserRole = UserRole.BUYER) {
+  async verifyOtp(phone: string, otp: string, role?: UserRole) {
     const hash = phoneHash(phone);
     const key = `otp:${hash}`;
     const expected = await this.redis.redis.get(key);
@@ -50,10 +68,13 @@ export class AuthService {
     }
     await this.redis.redis.del(key);
 
-    let user = await this.prisma.user.findUnique({ where: { phoneHash: hash } });
+    let user = await this.prisma.user.findUnique({
+      where: { phoneHash: hash },
+    });
     if (!user) {
+      const signupRole = this.resolveSignupRole(role);
       user = await this.prisma.user.create({
-        data: { phoneHash: hash, phoneEnc: null, role },
+        data: { phoneHash: hash, phoneEnc: null, role: signupRole },
       });
     }
 
@@ -71,5 +92,46 @@ export class AuthService {
 
   phoneHashFromRaw(phone: string): string {
     return phoneHash(phone);
+  }
+
+  /**
+   * Deterministic demo users (9990000001–9990000008) so each role maps to a stable account.
+   * Only enabled when DEMO_LOGIN=true (never enable in production).
+   */
+  async devLogin(role: UserRole) {
+    if (this.config.get<string>('DEMO_LOGIN') !== 'true') {
+      throw new ForbiddenException('Demo login is disabled');
+    }
+
+    const roleToPhone: Record<UserRole, string> = {
+      [UserRole.BROKER]: '9990000001',
+      [UserRole.BUYER]: '9990000002',
+      [UserRole.SELLER]: '9990000003',
+      [UserRole.NRI]: '9990000004',
+      [UserRole.HNI]: '9990000005',
+      [UserRole.INSTITUTIONAL_SELLER]: '9990000006',
+      [UserRole.INSTITUTIONAL_BUYER]: '9990000007',
+      [UserRole.ADMIN]: '9990000008',
+    };
+
+    const phone = roleToPhone[role];
+    const hash = phoneHash(phone);
+
+    const user = await this.prisma.user.upsert({
+      where: { phoneHash: hash },
+      create: { phoneHash: hash, phoneEnc: null, role },
+      update: { role },
+    });
+
+    const accessToken = await this.jwt.signAsync({
+      sub: user.id,
+      phoneHash: user.phoneHash,
+      role: user.role,
+    });
+
+    return {
+      accessToken,
+      user: { id: user.id, role: user.role },
+    };
   }
 }

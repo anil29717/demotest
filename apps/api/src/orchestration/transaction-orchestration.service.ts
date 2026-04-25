@@ -2,6 +2,7 @@ import { Injectable, BadRequestException } from '@nestjs/common';
 import { DealStage } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { ComplianceService } from '../compliance/compliance.service';
 
 /** SLA in hours per stage (Module 40). */
 const SLA_HOURS: Partial<Record<DealStage, number>> = {
@@ -35,12 +36,13 @@ export class TransactionOrchestrationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly compliance: ComplianceService,
   ) {}
 
   private nextStage(current: DealStage): DealStage | null {
     const i = ORDER.indexOf(current);
     if (i < 0 || i >= ORDER.length - 1) return null;
-    return ORDER[i + 1]!;
+    return ORDER[i + 1];
   }
 
   async advanceDeal(dealId: string, userId: string) {
@@ -84,7 +86,11 @@ export class TransactionOrchestrationService {
         stage: next,
         stageEnteredAt: new Date(),
         slaBreachCount,
-        dealHealthScore: Math.max(0, (deal.dealHealthScore ?? 50) - (slaBreachCount > deal.slaBreachCount ? 5 : 0)),
+        dealHealthScore: Math.max(
+          0,
+          (deal.dealHealthScore ?? 50) -
+            (slaBreachCount > deal.slaBreachCount ? 5 : 0),
+        ),
       },
     });
 
@@ -94,6 +100,13 @@ export class TransactionOrchestrationService {
       entityType: 'deal',
       entityId: dealId,
       metadata: { from: deal.stage, to: next },
+    });
+
+    await this.compliance.recordDealStageAdvance({
+      userId,
+      dealId,
+      from: deal.stage,
+      to: next,
     });
 
     return updated;
@@ -119,7 +132,10 @@ export class TransactionOrchestrationService {
     }
   }
 
-  checkDependency(institutionalStage: number | null, ndaSigned: boolean): boolean {
+  checkDependency(
+    institutionalStage: number | null,
+    ndaSigned: boolean,
+  ): boolean {
     if (institutionalStage == null) return true;
     if (institutionalStage >= 4 && !ndaSigned) return false;
     return true;

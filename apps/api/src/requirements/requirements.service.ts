@@ -1,9 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { Urgency } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { MatchingService } from '../matching/matching.service';
 import { CreateRequirementDto } from './dto/create-requirement.dto';
+import { ContactPolicyService } from '../contact-policy/contact-policy.service';
 
 @Injectable()
 export class RequirementsService {
@@ -11,6 +12,7 @@ export class RequirementsService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly matching: MatchingService,
+    private readonly contactPolicy: ContactPolicyService,
   ) {}
 
   private tagForUrgency(u: Urgency) {
@@ -20,6 +22,19 @@ export class RequirementsService {
   }
 
   async create(userId: string, dto: CreateRequirementDto) {
+    if (dto.budgetMin > dto.budgetMax) {
+      throw new BadRequestException(
+        'budgetMin must be less than or equal to budgetMax',
+      );
+    }
+    if (dto.areaSqftMin > dto.areaSqftMax) {
+      throw new BadRequestException(
+        'areaSqftMin must be less than or equal to areaSqftMax',
+      );
+    }
+
+    this.contactPolicy.assertRequirementPublicSurfaces(dto.city, dto.areas);
+
     const tag = this.tagForUrgency(dto.urgency);
     const row = await this.prisma.requirement.create({
       data: {
@@ -44,7 +59,11 @@ export class RequirementsService {
       entityId: row.id,
     });
 
-    await this.matching.runForRequirement(row.id);
+    try {
+      await this.matching.runForRequirement(row.id);
+    } catch {
+      // Keep requirement creation resilient if downstream matching side-effects fail.
+    }
     return row;
   }
 

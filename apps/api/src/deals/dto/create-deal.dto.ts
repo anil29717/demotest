@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 import { DealStage } from '@prisma/client';
 
 export class CreateDealDto {
@@ -19,5 +19,6 @@ export class CreateDealDto {
   institutionId?: string;
 
   @IsOptional()
+  @IsEnum(DealStage)
   stage?: DealStage;
 }

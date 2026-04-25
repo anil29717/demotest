@@ -400,12 +400,33 @@ model AuctionListing {
   createdAt   DateTime @default(now())
 }
 
+model FraudCase {
+  id             String   @id @default(cuid())
+  subjectUserId  String?
+  propertyId     String?
+  dealId         String?
+  /// open | review | blocked | cleared
+  status         String   @default("open")
+  score          Float    @default(0)
+  reason         String?
+  resolvedById   String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
 model WhatsAppIngest {
-  id         String   @id @default(cuid())
-  rawPayload Json
-  intent     String?
-  leadId     String?
-  createdAt  DateTime @default(now())
+  id          String   @id @default(cuid())
+  /// Stable id for webhook retries (Meta message id, custom id, or sha256 of body)
+  dedupeKey   String?  @unique
+  rawPayload  Json
+  /// Mapped intent: e.g. inquiry_text, button_reply, interactive_reply, status, unknown
+  intent      String?
+  leadId      String?
+  /// Meta message `type` (text, button, interactive, image, ...)
+  messageType String?
+  /// WhatsApp ID (digits) from `messages[].from`
+  fromWaId    String?
+  createdAt   DateTime @default(now())
 }
 
 /** Module 38 — IRM basics */

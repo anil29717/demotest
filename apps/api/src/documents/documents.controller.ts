@@ -61,7 +61,16 @@ export class DocumentsController {
   }
 
   @Get(':id/presigned-url')
-  presigned(@Param('id') id: string) {
+  async presigned(@CurrentUser() user: JwtPayloadUser, @Param('id') id: string) {
+    await this.prisma.activityLog.create({
+      data: {
+        userId: user.sub,
+        action: 'DOCUMENT_PRESIGNED_ACCESS',
+        entityType: 'document',
+        entityId: id,
+        metadata: { channel: 'data_room' },
+      },
+    });
     return {
       documentId: id,
       url: `s3://encrypted-bucket/presigned-placeholder/${id}`,

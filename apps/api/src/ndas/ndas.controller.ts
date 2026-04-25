@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Post,
+  Query,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -18,11 +27,24 @@ export class NdasController {
   constructor(private readonly prisma: PrismaService) {}
 
   @Post('sign')
-  async sign(@CurrentUser() user: JwtPayloadUser, @Body() dto: SignNdaDto, @Req() req: Request) {
+  async sign(
+    @CurrentUser() user: JwtPayloadUser,
+    @Body() dto: SignNdaDto,
+    @Req() req: Request,
+  ) {
+    const institution = await this.prisma.institution.findUnique({
+      where: { id: dto.institutionId },
+      select: { id: true },
+    });
+    if (!institution) throw new BadRequestException('Institution not found');
+
     const ip = req.ip ?? '0.0.0.0';
     return this.prisma.nda.upsert({
       where: {
-        userId_institutionId: { userId: user.sub, institutionId: dto.institutionId },
+        userId_institutionId: {
+          userId: user.sub,
+          institutionId: dto.institutionId,
+        },
       },
       create: {
         userId: user.sub,
@@ -40,7 +62,10 @@ export class NdasController {
   }
 
   @Get('status')
-  status(@CurrentUser() user: JwtPayloadUser, @Query('institutionId') institutionId: string) {
+  status(
+    @CurrentUser() user: JwtPayloadUser,
+    @Query('institutionId') institutionId: string,
+  ) {
     if (!institutionId) return null;
     return this.prisma.nda.findUnique({
       where: {

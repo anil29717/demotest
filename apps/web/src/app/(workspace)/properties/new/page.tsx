@@ -3,14 +3,16 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { ChevronLeft, FileText, Image as ImageIcon, MapPin, Send, ShieldAlert } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { apiFetch } from "@/lib/api";
+import { formatINR } from "@/lib/format";
 
 const PT = ["RESIDENTIAL", "COMMERCIAL", "PLOT", "INSTITUTIONAL"] as const;
 const DT = ["SALE", "RENT"] as const;
 
 export default function NewPropertyPage() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const router = useRouter();
   const [err, setErr] = useState<string | null>(null);
   const [uploadMsg, setUploadMsg] = useState<string | null>(null);
@@ -30,6 +32,9 @@ export default function NewPropertyPage() {
     organizationId: "",
     imageUrlsText: "",
     isHighOpportunity: false,
+    reasonForSelling: "",
+    timeline: "",
+    negotiable: false,
   });
 
   async function submit(e: React.FormEvent) {
@@ -60,6 +65,9 @@ export default function NewPropertyPage() {
           organizationId: form.organizationId || undefined,
           imageUrls: imageUrls.length ? imageUrls : undefined,
           isHighOpportunity: form.isHighOpportunity,
+          reasonForSelling: form.reasonForSelling || undefined,
+          timeline: form.timeline || undefined,
+          negotiable: form.negotiable,
         }),
       });
       router.push("/properties");
@@ -104,12 +112,21 @@ export default function NewPropertyPage() {
     );
 
   return (
-    <div className="mx-auto max-w-xl">
-      <h1 className="text-xl font-semibold">Post property</h1>
-      <p className="mt-1 text-sm text-zinc-500">
-        Do not include phone, email, or URLs in title/description (platform rule).
-      </p>
+    <div className="mx-auto max-w-2xl">
+      <Link href="/properties" className="inline-flex items-center gap-2 text-sm text-[#888] hover:text-white">
+        <ChevronLeft className="h-4 w-4" /> Back
+      </Link>
+      <h1 className="mt-2 text-xl font-semibold">Post property</h1>
+      {user?.role === "SELLER" ? (
+        <p className="mt-2 text-sm text-[#888]">List your property and get matched with verified buyers automatically.</p>
+      ) : (
+        <p className="mt-2 inline-flex items-center gap-2 text-sm text-amber-300">
+          <ShieldAlert className="h-4 w-4" /> Do not include phone, email, or URLs — platform rule.
+        </p>
+      )}
       <form onSubmit={submit} className="mt-6 space-y-3 text-sm">
+        <section className="rounded-xl border border-[#1f1f1f] bg-[#111111] p-4">
+          <p className="mb-3 inline-flex items-center gap-2 font-medium text-white"><FileText className="h-4 w-4 text-[#00C49A]" /> Basic details</p>
         <label className="block">
           Title
           <input
@@ -127,6 +144,7 @@ export default function NewPropertyPage() {
             value={form.description}
             onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
           />
+          <p className="mt-1 text-right text-xs text-zinc-500">{form.description.length}/500</p>
         </label>
         <div className="grid gap-3 sm:grid-cols-2">
           <label>
@@ -158,6 +176,9 @@ export default function NewPropertyPage() {
             </select>
           </label>
         </div>
+        </section>
+        <section className="rounded-xl border border-[#1f1f1f] bg-[#111111] p-4">
+          <p className="mb-3 font-medium text-white">Pricing & size</p>
         <div className="grid gap-3 sm:grid-cols-2">
           <label>
             Price (INR)
@@ -180,6 +201,10 @@ export default function NewPropertyPage() {
             />
           </label>
         </div>
+          <p className="text-xs text-zinc-500">Live: {formatINR(Number(form.price || 0))}</p>
+        </section>
+        <section className="rounded-xl border border-[#1f1f1f] bg-[#111111] p-4">
+          <p className="mb-3 inline-flex items-center gap-2 font-medium text-white"><MapPin className="h-4 w-4 text-[#00C49A]" /> Location</p>
         <label>
           City
           <input
@@ -222,15 +247,17 @@ export default function NewPropertyPage() {
             />
           </div>
         </label>
-        <label>
-          Organization ID (optional — broker team)
-          <input
-            className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2"
-            value={form.organizationId}
-            onChange={(e) => setForm((f) => ({ ...f, organizationId: e.target.value }))}
-            placeholder="From “Create broker organization”"
-          />
-        </label>
+        {user?.role !== "SELLER" ? (
+          <label>
+            Organization ID (optional — broker team)
+            <input
+              className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2"
+              value={form.organizationId}
+              onChange={(e) => setForm((f) => ({ ...f, organizationId: e.target.value }))}
+              placeholder="From “Create broker organization”"
+            />
+          </label>
+        ) : null}
         <label className="flex items-center gap-2">
           <input
             type="checkbox"
@@ -239,8 +266,52 @@ export default function NewPropertyPage() {
           />
           <span>High-Opportunity Investment Deal (distressed / special situation)</span>
         </label>
+          <label className="mt-2 block">
+            Bank auction property
+            <input
+              type="checkbox"
+              className="ml-2"
+              checked={form.dealType === "SALE" && form.isHighOpportunity}
+              onChange={(e) => setForm((f) => ({ ...f, isHighOpportunity: e.target.checked }))}
+            />
+          </label>
+          {user?.role === "SELLER" ? (
+            <details className="mt-3 rounded-lg border border-[#1f1f1f] p-3">
+              <summary className="cursor-pointer text-xs text-[#888]">Seller motivation fields</summary>
+              <div className="mt-3 grid gap-3">
+                <label>
+                  Reason for selling
+                  <select className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2" value={form.reasonForSelling} onChange={(e)=>setForm((f)=>({...f, reasonForSelling:e.target.value}))}>
+                    <option value="">Select</option>
+                    <option>Upgrading</option>
+                    <option>Relocation</option>
+                    <option>Investment exit</option>
+                    <option>Financial need</option>
+                    <option>Other</option>
+                  </select>
+                </label>
+                <label>
+                  Timeline
+                  <select className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2" value={form.timeline} onChange={(e)=>setForm((f)=>({...f, timeline:e.target.value}))}>
+                    <option value="">Select</option>
+                    <option>Immediate (&lt; 1 month)</option>
+                    <option>1–3 months</option>
+                    <option>3–6 months</option>
+                    <option>Flexible</option>
+                  </select>
+                </label>
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={form.negotiable} onChange={(e)=>setForm((f)=>({...f, negotiable:e.target.checked}))} />
+                  Negotiable
+                </label>
+              </div>
+            </details>
+          ) : null}
+        </section>
+        <section className="rounded-xl border border-[#1f1f1f] bg-[#111111] p-4">
+          <p className="mb-3 inline-flex items-center gap-2 font-medium text-white"><ImageIcon className="h-4 w-4 text-[#00C49A]" /> Images</p>
         <label>
-          Upload images (presigned stub)
+          Upload images
           <input
             type="file"
             multiple
@@ -260,12 +331,13 @@ export default function NewPropertyPage() {
             placeholder="https://images.unsplash.com/..."
           />
         </label>
+        </section>
         {err && <p className="text-sm text-red-400">{err}</p>}
         <button
           type="submit"
-          className="rounded-lg bg-teal-600 px-4 py-2 font-medium text-white hover:bg-teal-500"
+          className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-[#00C49A] to-[#00A882] px-4 py-2 font-medium text-black"
         >
-          Publish
+          {user?.role === "SELLER" ? "List my property" : "Publish listing"} <Send className="h-4 w-4" />
         </button>
       </form>
     </div>

@@ -1,11 +1,29 @@
-import { Body, Controller, Get, Param, Post, Put, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Put,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
+import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtPayloadUser } from '../common/decorators/current-user.decorator';
 import { LeadsService } from './leads.service';
 import { LeadStatus } from '@prisma/client';
+import { Roles } from '../common/decorators/roles.decorator';
+import { RolesGuard } from '../common/guards/roles.guard';
 import { Type } from 'class-transformer';
-import { IsDate, IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import {
+  IsDate,
+  IsEnum,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 
 class CreateLeadDto {
   @IsOptional()
@@ -76,13 +94,20 @@ class LeadFollowupDto {
 }
 
 @Controller('leads')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRole.ADMIN, UserRole.BROKER)
 export class LeadsController {
   constructor(private readonly leads: LeadsService) {}
 
   @Get()
-  async list(@CurrentUser() user: JwtPayloadUser, @Query('organizationId') organizationId: string) {
-    const org = await this.leads.resolveOrganizationId(user.sub, organizationId);
+  async list(
+    @CurrentUser() user: JwtPayloadUser,
+    @Query('organizationId') organizationId: string,
+  ) {
+    const org = await this.leads.resolveOrganizationId(
+      user.sub,
+      organizationId,
+    );
     if (!org) return [];
     return this.leads.list(org);
   }
@@ -93,12 +118,20 @@ export class LeadsController {
   }
 
   @Put(':id')
-  update(@CurrentUser() user: JwtPayloadUser, @Param('id') id: string, @Body() dto: UpdateLeadDto) {
+  update(
+    @CurrentUser() user: JwtPayloadUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateLeadDto,
+  ) {
     return this.leads.updateLead(user.sub, id, dto);
   }
 
   @Post(':id/notes')
-  addNote(@CurrentUser() user: JwtPayloadUser, @Param('id') id: string, @Body() dto: LeadNoteDto) {
+  addNote(
+    @CurrentUser() user: JwtPayloadUser,
+    @Param('id') id: string,
+    @Body() dto: LeadNoteDto,
+  ) {
     return this.leads.addNote(user.sub, id, dto.body);
   }
 

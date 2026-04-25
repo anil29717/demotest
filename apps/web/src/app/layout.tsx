@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { Providers } from "@/components/providers";
+import { ToastProvider } from "@/components/ui/toast-provider";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -13,12 +15,12 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "AR Buildwel — Real Estate Transaction OS",
+  title: "AR Buildwel — Luxury Real Estate Portfolio",
   description:
-    "From lead to closure: matching, CRM, institutional deals, and controlled contact architecture.",
+    "A modern luxury real estate advisory experience for curated acquisitions, private listings, and high-value portfolio execution.",
   openGraph: {
-    title: "AR Buildwel",
-    description: "India's structured real estate deal execution platform.",
+    title: "AR Buildwel — Modern Luxury Living",
+    description: "Editorial-grade real estate portfolio landing for premium buyers and investors.",
   },
 };
 
@@ -30,7 +32,10 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-        {children}
+        <Providers>
+          {children}
+          <ToastProvider />
+        </Providers>
       </body>
     </html>
   );

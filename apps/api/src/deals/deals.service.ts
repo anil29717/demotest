@@ -15,13 +15,47 @@ export class DealsService {
   ) {}
 
   async create(userId: string, dto: CreateDealDto) {
-    if (!dto.propertyId && !dto.institutionId) {
-      throw new BadRequestException('propertyId or institutionId required');
+    const hasProperty = !!dto.propertyId;
+    const hasInstitution = !!dto.institutionId;
+    if (hasProperty === hasInstitution) {
+      throw new BadRequestException(
+        'Exactly one of propertyId or institutionId is required',
+      );
     }
     const member = await this.prisma.organizationMember.findFirst({
       where: { organizationId: dto.organizationId, userId },
     });
     if (!member) throw new BadRequestException('Not a member of organization');
+
+    const requirement = await this.prisma.requirement.findUnique({
+      where: { id: dto.requirementId },
+      select: { id: true },
+    });
+    if (!requirement) throw new BadRequestException('Requirement not found');
+
+    if (dto.propertyId) {
+      const property = await this.prisma.property.findUnique({
+        where: { id: dto.propertyId },
+        select: { id: true, organizationId: true },
+      });
+      if (!property) throw new BadRequestException('Property not found');
+      if (
+        property.organizationId &&
+        property.organizationId !== dto.organizationId
+      ) {
+        throw new BadRequestException(
+          'Property does not belong to this organization',
+        );
+      }
+    }
+
+    if (dto.institutionId) {
+      const institution = await this.prisma.institution.findUnique({
+        where: { id: dto.institutionId },
+        select: { id: true },
+      });
+      if (!institution) throw new BadRequestException('Institution not found');
+    }
 
     const deal = await this.prisma.deal.create({
       data: {
@@ -122,7 +156,26 @@ export class DealsService {
     });
   }
 
+  async listForOrganizationUser(userId: string, organizationId: string) {
+    const member = await this.prisma.organizationMember.findFirst({
+      where: { organizationId, userId },
+      select: { id: true },
+    });
+    if (!member) throw new BadRequestException('Not a member of organization');
+    return this.list(organizationId);
+  }
+
   async advance(userId: string, dealId: string) {
+    const deal = await this.prisma.deal.findUnique({
+      where: { id: dealId },
+      select: { id: true, organizationId: true },
+    });
+    if (!deal) throw new BadRequestException('Deal not found');
+    const member = await this.prisma.organizationMember.findFirst({
+      where: { organizationId: deal.organizationId, userId },
+      select: { id: true },
+    });
+    if (!member) throw new BadRequestException('Not a member of organization');
     return this.orchestration.advanceDeal(dealId, userId);
   }
 

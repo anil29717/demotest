@@ -1,10 +1,30 @@
-import { Body, Controller, Get, Param, Put, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Param,
+  Put,
+  UseGuards,
+} from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtPayloadUser } from '../common/decorators/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
-import { IsArray, IsBoolean, IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  IsArray,
+  IsBoolean,
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+  Matches,
+  Max,
+  MaxLength,
+  Min,
+  ValidateIf,
+} from 'class-validator';
 
 class UpdateProfileDto {
   @IsOptional()
@@ -38,6 +58,20 @@ class OnboardingDto {
   step?: string;
 }
 
+const SELF_SERVICE_ROLES: ReadonlySet<UserRole> = new Set([
+  UserRole.BUYER,
+  UserRole.SELLER,
+  UserRole.BROKER,
+]);
+
+const ONBOARDING_STEPS = [
+  'started',
+  'profile',
+  'verification',
+  'complete',
+] as const;
+type OnboardingStep = (typeof ONBOARDING_STEPS)[number];
+
 class NotificationPrefsDto {
   @IsOptional()
   @IsBoolean()
@@ -50,12 +84,66 @@ class NotificationPrefsDto {
   @IsOptional()
   @IsBoolean()
   slaWarnings?: boolean;
+
+  /** Local hour (0–23) for digest send window preview; omit for default 09:00. */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(23)
+  digestHourLocal?: number;
+
+  /** Local minute (0–59) for digest send window preview; omit for default :30. */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(59)
+  digestMinuteLocal?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  whatsappDigest?: boolean;
+
+  /** E.164 (e.g. +919876543210). Omit or clear to disable WhatsApp mirror. */
+  @IsOptional()
+  @ValidateIf((o) => {
+    const v = (o as NotificationPrefsDto).whatsappDigestTo;
+    return v != null && v !== '';
+  })
+  @IsString()
+  @MaxLength(20)
+  @Matches(/^\+[1-9]\d{9,14}$/)
+  whatsappDigestTo?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  emailMatchAlerts?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  emailDailyDigest?: boolean;
 }
 
 @Controller('user')
 @UseGuards(JwtAuthGuard)
 export class UsersController {
   constructor(private readonly prisma: PrismaService) {}
+
+  @Get('broker-network')
+  async brokerNetwork(@CurrentUser() user: JwtPayloadUser) {
+    const memberships = await this.prisma.organizationMember.findMany({
+      where: { userId: user.sub },
+      include: { organization: { select: { id: true, name: true } } },
+    });
+    return {
+      userId: user.sub,
+      organizations: memberships.map((m) => ({
+        organizationId: m.organizationId,
+        name: m.organization.name,
+        role: m.role,
+      })),
+      note: 'Phase 1: flat org roles (ADMIN/AGENT/VIEWER). Territory splits & uplines deferred to Phase 2 unless expanded here.',
+    };
+  }
 
   @Get('profile')
   async profile(@CurrentUser() user: JwtPayloadUser) {
@@ -79,7 +167,10 @@ export class UsersController {
   }
 
   @Put('profile')
-  async update(@CurrentUser() user: JwtPayloadUser, @Body() dto: UpdateProfileDto) {
+  async update(
+    @CurrentUser() user: JwtPayloadUser,
+    @Body() dto: UpdateProfileDto,
+  ) {
     return this.prisma.user.update({
       where: { id: user.sub },
       data: {
@@ -88,12 +179,44 @@ export class UsersController {
         serviceAreas: dto.serviceAreas,
         reraId: dto.reraId,
       },
-      select: { id: true, name: true, email: true, role: true, serviceAreas: true, reraId: true },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        serviceAreas: true,
+        reraId: true,
+      },
     });
   }
 
   @Put('role')
   async role(@CurrentUser() user: JwtPayloadUser, @Body() dto: UpdateRoleDto) {
+    if (!SELF_SERVICE_ROLES.has(dto.role)) {
+      throw new BadRequestException('Role change not allowed');
+    }
+    const current = await this.prisma.user.findUnique({
+      where: { id: user.sub },
+      select: { role: true, serviceAreas: true },
+    });
+    if (!current) throw new BadRequestException('User not found');
+    if (
+      current.role !== UserRole.BUYER &&
+      current.role !== UserRole.SELLER &&
+      current.role !== UserRole.BROKER
+    ) {
+      throw new BadRequestException(
+        'Role change allowed only for core marketplace users',
+      );
+    }
+    if (
+      dto.role === UserRole.BROKER &&
+      (!current.serviceAreas || current.serviceAreas.length === 0)
+    ) {
+      throw new BadRequestException(
+        'Set service areas before switching to broker',
+      );
+    }
     return this.prisma.user.update({
       where: { id: user.sub },
       data: { role: dto.role },
@@ -102,10 +225,34 @@ export class UsersController {
   }
 
   @Put('onboarding')
-  async onboarding(@CurrentUser() user: JwtPayloadUser, @Body() dto: OnboardingDto) {
+  async onboarding(
+    @CurrentUser() user: JwtPayloadUser,
+    @Body() dto: OnboardingDto,
+  ) {
+    const step: OnboardingStep =
+      dto.step && (ONBOARDING_STEPS as readonly string[]).includes(dto.step)
+        ? (dto.step as OnboardingStep)
+        : 'complete';
+
+    if (step === 'complete') {
+      const profile = await this.prisma.user.findUnique({
+        where: { id: user.sub },
+        select: { role: true, serviceAreas: true },
+      });
+      if (!profile) throw new BadRequestException('User not found');
+      if (
+        profile.role === UserRole.BROKER &&
+        (!profile.serviceAreas || profile.serviceAreas.length === 0)
+      ) {
+        throw new BadRequestException(
+          'Brokers must set at least one service area before completing onboarding',
+        );
+      }
+    }
+
     return this.prisma.user.update({
       where: { id: user.sub },
-      data: { onboardingStep: dto.step ?? 'complete' },
+      data: { onboardingStep: step },
       select: { id: true, onboardingStep: true },
     });
   }

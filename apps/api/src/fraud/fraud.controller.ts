@@ -1,7 +1,9 @@
-import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { PrismaService } from '../prisma/prisma.service';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import type { JwtPayloadUser } from '../common/decorators/current-user.decorator';
 import { IsNotEmpty, IsString } from 'class-validator';
+import { FraudService } from './fraud.service';
 
 class DuplicateCheckDto {
   @IsString()
@@ -13,27 +15,23 @@ class DuplicateCheckDto {
 @Controller('fraud')
 @UseGuards(JwtAuthGuard)
 export class FraudController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly fraud: FraudService) {}
+
+  @Get('listing-velocity/me')
+  async listingVelocityMe(@CurrentUser() user: JwtPayloadUser) {
+    const r = await this.fraud.listingCreationVelocity(user.sub);
+    return {
+      ...r,
+      windowHours: 1,
+      note: 'Elevated if more than 5 listings in the last hour.',
+    };
+  }
 
   @Post('duplicate-check')
   async duplicateCheck(@Body() dto: DuplicateCheckDto) {
-    const p = await this.prisma.property.findUnique({
-      where: { id: dto.propertyId },
-      select: { city: true, latitude: true, longitude: true, title: true },
-    });
-    if (!p) return { risk: 'unknown' as const, reason: 'Property not found' };
-
-    const near = await this.prisma.property.count({
-      where: {
-        id: { not: dto.propertyId },
-        city: p.city,
-        status: 'active',
-      },
-    });
-
+    const r = await this.fraud.duplicateListingRisk(dto.propertyId);
     return {
-      risk: near > 3 ? ('elevated' as const) : ('low' as const),
-      similarListingsInCity: near,
+      ...r,
       note: 'Phase 2: embedding + image hash dedupe',
     };
   }

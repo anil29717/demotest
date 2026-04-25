@@ -1,7 +1,10 @@
 import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtPayloadUser } from '../common/decorators/current-user.decorator';
+import { Roles } from '../common/decorators/roles.decorator';
+import { RolesGuard } from '../common/guards/roles.guard';
 import { InstitutionsService } from './institutions.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { Type } from 'class-transformer';
@@ -58,22 +61,47 @@ export class InstitutionsController {
     return this.institutions.publicPreview(id);
   }
 
+  @Get(':id/dd-pack')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.BROKER,
+    UserRole.HNI,
+    UserRole.INSTITUTIONAL_BUYER,
+    UserRole.INSTITUTIONAL_SELLER,
+  )
+  ddPack(@Param('id') id: string) {
+    return this.institutions.ddPackOutline(id);
+  }
+
   @Get(':id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.BROKER,
+    UserRole.HNI,
+    UserRole.INSTITUTIONAL_BUYER,
+    UserRole.INSTITUTIONAL_SELLER,
+  )
   detail(@CurrentUser() user: JwtPayloadUser, @Param('id') id: string) {
     return this.institutions.detailForUser(id, user.sub);
   }
 
   @Post()
-  @UseGuards(JwtAuthGuard)
-  async create(@CurrentUser() user: JwtPayloadUser, @Body() dto: CreateInstitutionDto) {
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.BROKER, UserRole.INSTITUTIONAL_SELLER)
+  async create(
+    @CurrentUser() user: JwtPayloadUser,
+    @Body() dto: CreateInstitutionDto,
+  ) {
     return this.prisma.institution.create({
       data: {
         postedById: user.sub,
         institutionName: dto.institutionName,
         institutionType: dto.institutionType,
         city: dto.city,
-        maskedSummary: dto.maskedSummary ?? 'K-12 / Higher-Ed asset (confidential)',
+        maskedSummary:
+          dto.maskedSummary ?? 'K-12 / Higher-Ed asset (confidential)',
         askingPriceCr: dto.askingPriceCr,
         studentEnrollment: dto.studentEnrollment,
         latitude: dto.latitude,

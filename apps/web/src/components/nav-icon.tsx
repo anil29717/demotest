@@ -1,0 +1,66 @@
+import type { LucideIcon } from "lucide-react";
+import {
+  Award,
+  BarChart3,
+  Bell,
+  Briefcase,
+  Building2,
+  ClipboardList,
+  CreditCard,
+  Download,
+  FilePlus,
+  Gavel,
+  GitMerge,
+  Globe,
+  Handshake,
+  Landmark,
+  LayoutDashboard,
+  LineChart,
+  PlusCircle,
+  Rocket,
+  Scale,
+  ScrollText,
+  Search,
+  ShieldCheck,
+  SlidersHorizontal,
+  Star,
+  TrendingUp,
+  UserCircle,
+  Users,
+} from "lucide-react";
+import type { NavIconKey } from "@/lib/role-access";
+
+const MAP: Record<NavIconKey, LucideIcon> = {
+  "layout-dashboard": LayoutDashboard,
+  "building-2": Building2,
+  "plus-circle": PlusCircle,
+  "clipboard-list": ClipboardList,
+  "file-plus": FilePlus,
+  "git-merge": GitMerge,
+  briefcase: Briefcase,
+  users: Users,
+  bell: Bell,
+  landmark: Landmark,
+  gavel: Gavel,
+  globe: Globe,
+  "trending-up": TrendingUp,
+  handshake: Handshake,
+  "line-chart": LineChart,
+  "credit-card": CreditCard,
+  download: Download,
+  search: Search,
+  "bar-chart-3": BarChart3,
+  "shield-check": ShieldCheck,
+  scale: Scale,
+  "user-circle": UserCircle,
+  award: Award,
+  "sliders-horizontal": SlidersHorizontal,
+  "scroll-text": ScrollText,
+  star: Star,
+  rocket: Rocket,
+};
+
+export function NavIcon({ icon, className }: { icon: NavIconKey; className?: string }) {
+  const Icon = MAP[icon];
+  return <Icon className={className ?? "h-4 w-4 shrink-0"} aria-hidden />;
+}

@@ -24,7 +24,8 @@ export class ExportController {
       return;
     }
     const rows = await this.prisma.deal.findMany({ where: { organizationId } });
-    const header = 'id,stage,requirementId,propertyId,institutionId,createdAt\n';
+    const header =
+      'id,stage,requirementId,propertyId,institutionId,createdAt\n';
     const body = rows
       .map(
         (r) =>
@@ -56,11 +57,14 @@ export class ExportController {
     const body = rows
       .map(
         (r) =>
-          `${r.id},${escapeCsv(r.title)},${escapeCsv(r.city)},${r.dealType},${r.price},${r.areaSqft},${r.status},${r.createdAt.toISOString()}`,
+          `${r.id},${escapeCsv(r.title)},${escapeCsv(r.city)},${r.dealType},${String(r.price)},${r.areaSqft},${r.status},${r.createdAt.toISOString()}`,
       )
       .join('\n');
     res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', 'attachment; filename="properties.csv"');
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename="properties.csv"',
+    );
     res.send(header + body);
   }
 

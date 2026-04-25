@@ -1,7 +1,10 @@
 import { Body, Controller, Get, Put, UseGuards } from '@nestjs/common';
+import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtPayloadUser } from '../common/decorators/current-user.decorator';
+import { Roles } from '../common/decorators/roles.decorator';
+import { RolesGuard } from '../common/guards/roles.guard';
 import { PrismaService } from '../prisma/prisma.service';
 import { IsArray, IsNumber, IsOptional, IsString } from 'class-validator';
 
@@ -26,17 +29,23 @@ class InvestorPreferenceDto {
 }
 
 @Controller('irm')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRole.ADMIN, UserRole.BROKER, UserRole.HNI, UserRole.NRI)
 export class IrmController {
   constructor(private readonly prisma: PrismaService) {}
 
   @Get('preferences')
   get(@CurrentUser() user: JwtPayloadUser) {
-    return this.prisma.investorPreference.findUnique({ where: { userId: user.sub } });
+    return this.prisma.investorPreference.findUnique({
+      where: { userId: user.sub },
+    });
   }
 
   @Put('preferences')
-  upsert(@CurrentUser() user: JwtPayloadUser, @Body() dto: InvestorPreferenceDto) {
+  upsert(
+    @CurrentUser() user: JwtPayloadUser,
+    @Body() dto: InvestorPreferenceDto,
+  ) {
     return this.prisma.investorPreference.upsert({
       where: { userId: user.sub },
       create: {

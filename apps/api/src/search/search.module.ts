@@ -6,6 +6,6 @@ import { SearchController } from './search.controller';
 @Module({
   controllers: [SearchController],
   providers: [PropertySearchIndexService, SearchService],
-  exports: [PropertySearchIndexService],
+  exports: [PropertySearchIndexService, SearchService],
 })
 export class SearchModule {}

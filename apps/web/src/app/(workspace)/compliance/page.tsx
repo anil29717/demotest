@@ -2,7 +2,7 @@
 
 import { AlertCircle, AlertTriangle, CheckCircle, ChevronDown, ShieldCheck } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { motion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
@@ -14,18 +14,16 @@ type Item = { id: string; severity: string; title: string; body: string };
 
 export default function CompliancePage() {
   const { token, user } = useAuth();
-  const [items, setItems] = useState<Item[]>([]);
-  const { isLoading: loading } = useQuery({
+  const { data: items = [], isLoading: loading } = useQuery({
     queryKey: ["compliance", token],
     enabled: Boolean(token),
     queryFn: async () => {
-      const r = await apiFetch<{ items?: Item[] } | Item[]>("/compliance/feed?limit=20&offset=0", {
+      const r = await apiFetch<{ items?: Item[] }>("/compliance/feed", {
         token: token ?? undefined,
-      }).catch(() => []);
-      const list = Array.isArray(r) ? r : r.items ?? [];
-      setItems(list);
-      return true;
+      }).catch(() => ({ items: [] }));
+      return r.items ?? [];
     },
+    staleTime: 1000 * 60 * 2,
   });
 
   const groups = useMemo(() => {

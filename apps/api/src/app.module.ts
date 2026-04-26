@@ -33,6 +33,8 @@ import { Phase2Module } from './phase2/phase2.module';
 import { ReputationModule } from './reputation/reputation.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { ReviewsModule } from './reviews/reviews.module';
+import { EscrowModule } from './escrow/escrow.module';
+import { ChatModule } from './chat/chat.module';
 
 @Module({
   imports: [
@@ -69,6 +71,8 @@ import { ReviewsModule } from './reviews/reviews.module';
     ReputationModule,
     DashboardModule,
     ReviewsModule,
+    EscrowModule,
+    ChatModule,
   ],
   controllers: [HealthController],
 })

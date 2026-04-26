@@ -10,6 +10,7 @@ import { AuditService } from '../audit/audit.service';
 import { MatchingService } from '../matching/matching.service';
 import { FraudService } from '../fraud/fraud.service';
 import { PropertySearchIndexService } from '../search/property-search-index.service';
+import { SearchService } from '../search/search.service';
 import { ContactPolicyService } from '../contact-policy/contact-policy.service';
 import { CreatePropertyDto } from './dto/create-property.dto';
 import { UpdatePropertyDto } from './dto/update-property.dto';
@@ -28,6 +29,7 @@ export class PropertiesService {
     private readonly matching: MatchingService,
     private readonly fraud: FraudService,
     private readonly propertySearchIndex: PropertySearchIndexService,
+    private readonly searchService: SearchService,
     private readonly contactPolicy: ContactPolicyService,
   ) {}
 
@@ -146,6 +148,8 @@ export class PropertiesService {
     } catch (err) {
       this.logger.warn(`Elasticsearch index upsert skipped for ${row.id}`, err);
     }
+
+    void this.searchService.notifyInstantSavedSearchMatches(row.id);
 
     const listingRisk = await this.fraud.duplicateListingRisk(row.id);
     return { ...this.toPublic(row), listingRisk };

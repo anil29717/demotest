@@ -33,6 +33,46 @@ export class WhatsappAdminController {
     return this.metrics.snapshot();
   }
 
+  @Get('nlp-stats')
+  async nlpStats() {
+    const total = await this.prisma.whatsAppIngest.count();
+    const withNlp = await this.prisma.whatsAppIngest.count({
+      where: { nlpIntent: { not: null } },
+    });
+    const intents = await this.prisma.whatsAppIngest.groupBy({
+      by: ['nlpIntent'],
+      where: { nlpIntent: { not: null } },
+      _count: { _all: true },
+    });
+    const avg = await this.prisma.whatsAppIngest.aggregate({
+      where: { nlpConfidence: { not: null } },
+      _avg: { nlpConfidence: true },
+    });
+    const routed = await this.prisma.whatsAppIngest.count({
+      where: { routingStatus: 'ROUTED' },
+    });
+    const skipped = await this.prisma.whatsAppIngest.count({
+      where: { routingStatus: 'SKIPPED' },
+    });
+    const failed = await this.prisma.whatsAppIngest.count({
+      where: { routingStatus: 'FAILED' },
+    });
+    const denom = routed + skipped + failed;
+    return {
+      totalMessages: total,
+      nlpClassified: withNlp,
+      intentBreakdown: intents.map((i) => ({
+        intent: i.nlpIntent,
+        count: i._count._all,
+      })),
+      avgConfidence: avg._avg.nlpConfidence ?? 0,
+      routingRouted: routed,
+      routingSkipped: skipped,
+      routingFailed: failed,
+      routingSuccessRate: denom > 0 ? routed / denom : 0,
+    };
+  }
+
   @Get('ingests')
   async recentIngests(@Query('take') takeRaw?: string) {
     const take = Math.min(100, Math.max(1, parseInt(takeRaw ?? '30', 10) || 30));
@@ -46,6 +86,14 @@ export class WhatsappAdminController {
         messageType: true,
         fromWaId: true,
         leadId: true,
+        messageText: true,
+        nlpIntent: true,
+        nlpConfidence: true,
+        nlpExtracted: true,
+        routingStatus: true,
+        routedAt: true,
+        createdLeadId: true,
+        createdRequirementId: true,
         createdAt: true,
       },
     });

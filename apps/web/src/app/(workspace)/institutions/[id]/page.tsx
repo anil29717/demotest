@@ -114,7 +114,7 @@ export default function InstitutionDetailPage() {
         token,
         body: JSON.stringify({ institutionId: id }),
       });
-      setMsg("NDA request submitted. Our team will review within one to two business days.");
+      setMsg("NDA approved. Confidential details are now unlocked.");
       await load();
     } catch (e) {
       setMsg(e instanceof Error ? e.message : "Something went wrong.");

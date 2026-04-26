@@ -16,6 +16,7 @@ import {
   Landmark,
   LayoutDashboard,
   LineChart,
+  MessageSquare,
   PlusCircle,
   Rocket,
   Scale,
@@ -58,6 +59,7 @@ const MAP: Record<NavIconKey, LucideIcon> = {
   "scroll-text": ScrollText,
   star: Star,
   rocket: Rocket,
+  "message-square": MessageSquare,
 };
 
 export function NavIcon({ icon, className }: { icon: NavIconKey; className?: string }) {

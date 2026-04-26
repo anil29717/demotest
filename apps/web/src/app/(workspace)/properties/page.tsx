@@ -4,7 +4,7 @@ import { Activity, ArrowUpDown, Building2, Edit, Eye, GitMerge, MapPin, Maximize
 import Image from "next/image";
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import { apiFetch } from "@/lib/api";
 import { formatINR } from "@/lib/format";
@@ -31,9 +31,7 @@ type Prop = {
 
 export default function PropertiesPage() {
   const { token, user } = useAuth();
-  const [allRows, setAllRows] = useState<Prop[]>([]);
-  const [mineRows, setMineRows] = useState<Prop[]>([]);
-  const [marketRows, setMarketRows] = useState<Prop[]>([]);
+  const queryClient = useQueryClient();
   const [nriTab, setNriTab] = useState<"mine" | "browse">("mine");
   const [q, setQ] = useState("");
   const [propertyType, setPropertyType] = useState("ALL");
@@ -41,26 +39,35 @@ export default function PropertiesPage() {
   const [status, setStatus] = useState("ALL");
   const [sort, setSort] = useState("NEWEST");
 
-  const { isLoading: loading } = useQuery({
-    queryKey: ["properties", user?.role, token],
-    enabled: Boolean(token),
-    queryFn: async () => {
-      if (user?.role === "NRI" && token) {
-        const [mine, mkt] = await Promise.all([
-          apiFetch<Prop[]>("/properties/mine?limit=20&offset=0", { token }).catch(() => []),
-          apiFetch<Prop[]>("/properties?limit=20&offset=0", { token }).catch(() => []),
-        ]);
-        setMineRows(mine);
-        setMarketRows(mkt);
-        return true;
-      }
-      const rows = await apiFetch<Prop[]>("/properties?limit=20&offset=0", {
-        token: token ?? undefined,
-      }).catch(() => []);
-      setAllRows(rows);
-      return true;
-    },
+  const { data: mineRows = [], isLoading: loadingMine } = useQuery({
+    queryKey: ["properties-mine", token],
+    enabled: Boolean(token) && user?.role === "NRI",
+    queryFn: () =>
+      apiFetch<Prop[]>("/properties/mine?limit=20&offset=0", { token: token ?? undefined })
+        .catch(() => []),
+    staleTime: 1000 * 60 * 2,
   });
+
+  const { data: marketRows = [], isLoading: loadingMarket } = useQuery({
+    queryKey: ["properties-market", token],
+    enabled: Boolean(token) && user?.role === "NRI",
+    queryFn: () =>
+      apiFetch<Prop[]>("/properties?limit=20&offset=0", { token: token ?? undefined })
+        .catch(() => []),
+    staleTime: 1000 * 60 * 2,
+  });
+
+  const { data: allRows = [], isLoading: loadingAll } = useQuery({
+    queryKey: ["properties", user?.role, token],
+    enabled: Boolean(token) && user?.role !== "NRI",
+    queryFn: () =>
+      apiFetch<Prop[]>("/properties?limit=20&offset=0", {
+        token: token ?? undefined,
+      }).catch(() => []),
+    staleTime: 1000 * 60 * 2,
+  });
+  const loading = loadingMine || loadingMarket || loadingAll;
+  void queryClient;
 
   const sourceRows = user?.role === "NRI" ? (nriTab === "mine" ? mineRows : marketRows) : allRows;
 
@@ -200,6 +207,9 @@ export default function PropertiesPage() {
                           fill
                           className="object-cover"
                           loading="lazy"
+                          onError={(e) => {
+                            e.currentTarget.src = "/placeholder-property.png";
+                          }}
                         />
                       </div>
                     ) : (
@@ -354,6 +364,9 @@ export default function PropertiesPage() {
                     fill
                     className="object-cover"
                     loading="lazy"
+                    onError={(e) => {
+                      e.currentTarget.src = "/placeholder-property.png";
+                    }}
                   />
                 </div>
               ) : (

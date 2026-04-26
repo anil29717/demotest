@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   Award,
   BarChart3,
@@ -18,6 +19,7 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  MessageSquare,
   Network,
   Scale,
   Search,
@@ -25,6 +27,9 @@ import {
   Target,
   TrendingUp,
   Users,
+  User,
+  Settings,
+  ChevronUp,
   X,
   Zap,
   Globe,
@@ -65,6 +70,7 @@ type SidebarCounts = {
   compliance: number;
   auctions: number;
   institutions: number;
+  chatUnread: number;
 };
 
 const EMPTY_COUNTS: SidebarCounts = {
@@ -76,7 +82,18 @@ const EMPTY_COUNTS: SidebarCounts = {
   compliance: 0,
   auctions: 0,
   institutions: 0,
+  chatUnread: 0,
 };
+
+async function sumChatUnread(token: string): Promise<number> {
+  try {
+    const threads = await apiFetch<{ unreadCount?: number }[]>("/chat/threads", { token });
+    if (!Array.isArray(threads)) return 0;
+    return threads.reduce((sum, t) => sum + Number(t.unreadCount ?? 0), 0);
+  } catch {
+    return 0;
+  }
+}
 
 function useSidebarCounts(token: string | null, role?: string | null): SidebarCounts {
   const [counts, setCounts] = useState<SidebarCounts>(EMPTY_COUNTS);
@@ -118,6 +135,7 @@ function useSidebarCounts(token: string | null, role?: string | null): SidebarCo
             matches: Number(summary.matches ?? quickStats.myMatches ?? 0),
             deals: Array.isArray(dealRows) ? dealRows.length : 0,
           };
+          next.chatUnread = await sumChatUnread(token);
           if (!cancelled) setCounts(next);
           return;
         }
@@ -202,6 +220,9 @@ function useSidebarCounts(token: string | null, role?: string | null): SidebarCo
             (item) => String(item.severity ?? "").toUpperCase() === "HIGH",
           ).length,
         };
+        if (role === "BROKER" || role === "SELLER" || role === "ADMIN") {
+          next.chatUnread = await sumChatUnread(token);
+        }
         if (!cancelled) setCounts(next);
       } catch {
         if (!cancelled) setCounts(EMPTY_COUNTS);
@@ -227,12 +248,28 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { user, logout, token } = useAuth();
   const nav = useMemo(() => itemsForRole(user?.role), [user?.role]);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [onboardingComplete, setOnboardingComplete] = useState(true);
   const [organizationName, setOrganizationName] = useState<string>("Independent broker");
   const [nriCountry, setNriCountry] = useState<string | null>(null);
   const [hniTicketMin, setHniTicketMin] = useState<number | null>(null);
   const [hniTicketMax, setHniTicketMax] = useState<number | null>(null);
   const counts = useSidebarCounts(token, user?.role);
+  const profileMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!profileMenuOpen) return;
+    function onMouseDown(event: MouseEvent) {
+      if (!profileMenuRef.current) return;
+      if (event.target instanceof Node && !profileMenuRef.current.contains(event.target)) {
+        setProfileMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onMouseDown);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+    };
+  }, [profileMenuOpen]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -324,6 +361,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     "/matches": Zap,
     "/crm": Users,
     "/deals": Briefcase,
+    "/chat": MessageSquare,
     "/institutions": Landmark,
     "/auctions": Gavel,
     "/irm": Target,
@@ -356,6 +394,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     if (item.badgeKey === "compliance") return "bg-[#FF4444] text-white";
     if (item.badgeKey === "auctions") return "bg-amber-500/90 text-black";
     if (item.badgeKey === "institutions") return "bg-[#7F77DD] text-white";
+    if (item.badgeKey === "chatUnread") return "bg-sky-500 text-white";
     if (role === "BUYER" && item.badgeKey === "requirements") return "bg-[#378ADD] text-white";
     return "bg-[#00C49A] text-black";
   }
@@ -592,25 +631,81 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             ))}
           </div>
 
-          <div className="shrink-0 border-t border-[#1a1a1a] p-3">
-            <div className="flex items-center gap-2.5">
+          <div className="relative shrink-0 border-t border-[#1a1a1a] p-3" ref={profileMenuRef}>
+            <AnimatePresence>
+              {profileMenuOpen ? (
+                <motion.div
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 6 }}
+                  transition={{ duration: 0.16, ease: "easeOut" }}
+                  className="absolute left-3 z-50 w-[220px] rounded-[10px] border border-[#2a2a2a] bg-[#1a1a1a] p-1.5 shadow-[0_-4px_24px_rgba(0,0,0,0.5)]"
+                  style={{ bottom: 72 }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setProfileMenuOpen(false);
+                      router.push("/profile");
+                    }}
+                    className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[13px] text-[#ccc] transition hover:bg-[#2a2a2a]"
+                  >
+                    <User className="h-[14px] w-[14px] text-[#888]" />
+                    View profile
+                  </button>
+                  <div className="my-1 h-px bg-[#2a2a2a]" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setProfileMenuOpen(false);
+                      router.push("/profile?tab=settings");
+                    }}
+                    className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[13px] text-[#ccc] transition hover:bg-[#2a2a2a]"
+                  >
+                    <Settings className="h-[14px] w-[14px] text-[#888]" />
+                    Account settings
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setProfileMenuOpen(false);
+                      router.push("/settings/notifications");
+                    }}
+                    className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[13px] text-[#ccc] transition hover:bg-[#2a2a2a]"
+                  >
+                    <Bell className="h-[14px] w-[14px] text-[#888]" />
+                    Alert preferences
+                  </button>
+                  <div className="my-1 h-px bg-[#2a2a2a]" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setProfileMenuOpen(false);
+                      signOut();
+                    }}
+                    className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[13px] text-[#FF4444] transition hover:bg-[#FF444410]"
+                  >
+                    <LogOut className="h-[14px] w-[14px] text-[#FF4444]" />
+                    Log out
+                  </button>
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
+            <button
+              type="button"
+              onClick={() => setProfileMenuOpen((prev) => !prev)}
+              className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2.5 text-left transition hover:bg-[#ffffff08]"
+            >
               <div
                 className={`flex h-8 w-8 items-center justify-center rounded-full bg-[#1a1a1a] text-[12px] font-semibold ${avatarTone}`}
               >
                 {getInitials(initialsSeed)}
               </div>
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <p className="truncate text-[12px] font-medium text-white">{displayName}</p>
                 <p className="truncate text-[10px] text-[#444444]">{footerSecondary}</p>
               </div>
-            </div>
-            <button
-              type="button"
-              onClick={signOut}
-              className="mt-1.5 flex w-full items-center gap-2 rounded-[6px] px-2 py-1.5 text-[11px] text-[#444444] transition hover:bg-[#FF444410] hover:text-[#FF4444]"
-            >
-              <LogOut className="h-[14px] w-[14px]" />
-              Log out
+              <ChevronUp className="h-3 w-3 text-[#555]" />
             </button>
           </div>
         </aside>

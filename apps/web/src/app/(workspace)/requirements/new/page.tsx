@@ -4,6 +4,7 @@ import { ChevronLeft, MapPin, Send } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import { apiFetch } from "@/lib/api";
 import { formatINR } from "@/lib/format";
@@ -15,6 +16,7 @@ const UR = ["IMMEDIATE", "WITHIN_30_DAYS", "FLEXIBLE"] as const;
 export default function NewRequirementPage() {
   const { token, user } = useAuth();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
@@ -51,6 +53,10 @@ export default function NewRequirementPage() {
           urgency: form.urgency,
         }),
       });
+      await queryClient.invalidateQueries({ queryKey: ["requirements"] });
+      await queryClient.invalidateQueries({ queryKey: ["requirements-mine"] });
+      await queryClient.invalidateQueries({ queryKey: ["dashboard-all"] });
+      await queryClient.invalidateQueries({ queryKey: ["matches"] });
       router.push("/requirements");
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Error");

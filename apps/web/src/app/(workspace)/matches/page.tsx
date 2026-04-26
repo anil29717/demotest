@@ -12,11 +12,26 @@ import { formatINR } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { PageSkeleton } from "@/components/ui/skeleton";
 
+type MatchFactors = {
+  location?: number;
+  budget?: number;
+  propertyType?: number;
+  dealType?: number;
+  areaSqft?: number;
+  urgency?: number;
+  ruleScore?: number;
+};
+
 type MatchRow = {
   id: string;
   matchScore: number;
   hotMatch: boolean;
   status: string;
+  matchFactors?: MatchFactors;
+  mlScore?: number | null;
+  combinedScore?: number | null;
+  mlConfidence?: number | null;
+  mlExplanation?: Record<string, unknown> | null;
   property: {
     id: string;
     title: string;
@@ -58,12 +73,34 @@ export default function MatchesPage() {
 
   async function mark(id: string, status: "VIEWED" | "ACCEPTED" | "REJECTED") {
     if (!token) return;
+    const body: { status: string; accepted?: boolean } = { status };
+    if (status === "ACCEPTED") body.accepted = true;
+    if (status === "REJECTED") body.accepted = false;
     await apiFetch(`/matching/matches/${id}/status`, {
       method: "PUT",
       token,
-      body: JSON.stringify({ status }),
+      body: JSON.stringify(body),
     });
     void refetch();
+  }
+
+  function ruleScoreFromMatch(m: MatchRow): number | null {
+    const r = m.matchFactors?.ruleScore;
+    return typeof r === "number" ? r : null;
+  }
+
+  function scoreTooltip(m: MatchRow): string {
+    const f = m.matchFactors;
+    if (!f) return "";
+    return [
+      `Location (weighted): ${f.location?.toFixed(1) ?? "—"}`,
+      `Budget (weighted): ${f.budget?.toFixed(1) ?? "—"}`,
+      `Type (weighted): ${f.propertyType?.toFixed(1) ?? "—"}`,
+      `Area (weighted): ${f.areaSqft?.toFixed(1) ?? "—"}`,
+      m.mlConfidence != null ? `AI confidence: ${(m.mlConfidence * 100).toFixed(0)}%` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
   }
 
   if (!token)
@@ -275,7 +312,24 @@ export default function MatchesPage() {
               className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-4 py-3 text-sm"
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="font-medium text-teal-400">{m.matchScore}% match</span>
+                <span
+                  className="font-medium text-teal-400"
+                  title={scoreTooltip(m) || undefined}
+                >
+                  {m.matchScore}% combined
+                </span>
+                {m.mlConfidence != null &&
+                  m.mlConfidence > 0.6 &&
+                  m.mlScore != null && (
+                    <span className="rounded bg-[#00C49A]/20 px-2 py-0.5 text-[10px] font-medium text-[#00C49A]">
+                      AI {(m.mlScore as number).toFixed(0)}%
+                    </span>
+                  )}
+                {ruleScoreFromMatch(m) != null && (
+                  <span className="text-[10px] text-zinc-500">
+                    Rule {Math.round(ruleScoreFromMatch(m) as number)}%
+                  </span>
+                )}
                 {m.hotMatch && (
                   <span className="rounded bg-amber-900/40 px-2 py-0.5 text-xs text-amber-200">
                     Hot

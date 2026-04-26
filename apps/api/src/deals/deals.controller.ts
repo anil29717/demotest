@@ -46,7 +46,7 @@ export class DealsController {
   }
 
   @Get(':id/timeline')
-  @Roles(UserRole.ADMIN, UserRole.BROKER)
+  @Roles(UserRole.ADMIN, UserRole.BROKER, UserRole.BUYER)
   timeline(@CurrentUser() user: JwtPayloadUser, @Param('id') id: string) {
     return this.deals.timeline(id, user.sub);
   }

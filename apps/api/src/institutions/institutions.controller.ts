@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Request, UseGuards } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -70,8 +70,8 @@ export class InstitutionsController {
     UserRole.INSTITUTIONAL_BUYER,
     UserRole.INSTITUTIONAL_SELLER,
   )
-  ddPack(@Param('id') id: string) {
-    return this.institutions.ddPackOutline(id);
+  ddPack(@Param('id') id: string, @Request() req: { user: { id?: string; sub?: string } }) {
+    return this.institutions.ddPackOutline(id, req.user.id ?? req.user.sub ?? '');
   }
 
   @Get(':id')

@@ -3,9 +3,7 @@
 import { Bell, Briefcase, Building2, CheckCircle, Eye, GitMerge, MapPin, ShieldCheck, Users, Zap } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import toast from "react-hot-toast";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageSkeleton } from "@/components/ui/skeleton";
 import { StatCard } from "@/components/ui/stat-card";
@@ -13,7 +11,6 @@ import { useAuth } from "@/contexts/auth-context";
 import { apiFetch } from "@/lib/api";
 import { formatINR, getInitials, timeAgo } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
-import { httpStatusFromError } from "@/lib/nri-ui";
 import { BuyerDashboardView } from "./buyer-dashboard-view";
 import { HniDashboardView } from "./hni-dashboard-view";
 import { InstitutionalBuyerDashboardView } from "./institutional-buyer-dashboard-view";
@@ -52,14 +49,7 @@ type SvcReq = { id: string; type: string; status: string; createdAt: string };
 
 export default function DashboardPage() {
   const { token, ready, user } = useAuth();
-  const [summary, setSummary] = useState<DashboardSummary | null>(null);
-  const [deals, setDeals] = useState<Deal[]>([]);
-  const [leads, setLeads] = useState<Lead[]>([]);
-  const [orgName, setOrgName] = useState<string | null>(null);
-  const [properties, setProperties] = useState<SellerProperty[]>([]);
-  const [nriDashProfile, setNriDashProfile] = useState<NriDashProfile | null>(null);
-  const [svcRequests, setSvcRequests] = useState<SvcReq[]>([]);
-  const { isLoading: loading } = useQuery({
+  const { data: dashboardData, isLoading: loading } = useQuery({
     queryKey: ["dashboard-all", token, user?.role],
     enabled: Boolean(ready && token),
     queryFn: async () => {
@@ -69,66 +59,72 @@ export default function DashboardPage() {
         user?.role === "INSTITUTIONAL_BUYER" ||
         user?.role === "INSTITUTIONAL_SELLER"
       ) {
-        return true;
+        return {
+          summary: null as DashboardSummary | null,
+          deals: [] as Deal[],
+          leads: [] as Lead[],
+          orgName: null as string | null,
+          properties: [] as SellerProperty[],
+          nriDashProfile: null as NriDashProfile | null,
+          svcRequests: [] as SvcReq[],
+        };
       }
 
       if (user?.role === "NRI") {
-        try {
-          const [dash, p, orgs] = await Promise.all([
-            apiFetch<DashboardSummary>("/dashboard/summary", { token: token ?? undefined }),
-            apiFetch<SellerProperty[]>("/properties/mine?limit=20&offset=0", { token: token ?? undefined }).catch(() => []),
-            apiFetch<{ id: string; name: string }[]>("/organizations/mine", { token: token ?? undefined }).catch(() => []),
-          ]);
-          setSummary(dash);
-          setProperties(p);
-          setOrgName(orgs[0]?.name ?? null);
-          setDeals([]);
-          setLeads([]);
-          const oid = orgs[0]?.id;
-          if (oid) {
-            const rows = await apiFetch<SvcReq[]>(
-              `/services/requests?organizationId=${encodeURIComponent(oid)}`,
-              { token: token ?? undefined },
-            ).catch(() => []);
-            setSvcRequests(rows);
-          } else {
-            setSvcRequests([]);
-          }
-          try {
-            const prof = await apiFetch<NriDashProfile>("/verticals/nri/profile", { token: token ?? undefined });
-            setNriDashProfile(prof ?? null);
-          } catch (err) {
-            const st = httpStatusFromError(err);
-            if (st === 404 || st === 400 || st === 403) setNriDashProfile(null);
-            else {
-              setNriDashProfile(null);
-              toast.error("Could not load dashboard.", { duration: 3500 });
-            }
-          }
-        } catch {
-          setSummary(null);
-          toast.error("Could not load dashboard.", { duration: 3500 });
-        }
-        return true;
+        const [summary, properties, orgs] = await Promise.all([
+          apiFetch<DashboardSummary>("/dashboard/summary", { token: token ?? undefined }).catch(() => null),
+          apiFetch<SellerProperty[]>("/properties/mine?limit=20&offset=0", { token: token ?? undefined }).catch(() => []),
+          apiFetch<{ id: string; name: string }[]>("/organizations/mine", { token: token ?? undefined }).catch(() => []),
+        ]);
+        const oid = orgs[0]?.id;
+        const [svcRequests, nriDashProfile] = await Promise.all([
+          oid
+            ? apiFetch<SvcReq[]>(
+                `/services/requests?organizationId=${encodeURIComponent(oid)}`,
+                { token: token ?? undefined },
+              ).catch(() => [])
+            : Promise.resolve([] as SvcReq[]),
+          apiFetch<NriDashProfile>("/verticals/nri/profile", { token: token ?? undefined }).catch(() => null),
+        ]);
+        return {
+          summary,
+          deals: [] as Deal[],
+          leads: [] as Lead[],
+          orgName: orgs[0]?.name ?? null,
+          properties,
+          nriDashProfile,
+          svcRequests,
+        };
       }
 
-      const [dash, d, l, o, p] = await Promise.all([
-        apiFetch<DashboardSummary>("/dashboard/summary", { token: token ?? undefined }),
+      const [summary, deals, leads, orgs, properties] = await Promise.all([
+        apiFetch<DashboardSummary>("/dashboard/summary", { token: token ?? undefined }).catch(() => null),
         apiFetch<Deal[]>("/deals?limit=20&offset=0", { token: token ?? undefined }).catch(() => []),
         apiFetch<Lead[]>("/leads?limit=20&offset=0", { token: token ?? undefined }).catch(() => []),
-        apiFetch<{ id: string; name: string }[]>("/organizations/mine", { token: token ?? undefined }).catch(() => []),
+        apiFetch<{ id: string; name: string }[]>("/organizations/mine", {
+          token: token ?? undefined,
+        }).catch(() => []),
         apiFetch<SellerProperty[]>("/properties/mine?limit=20&offset=0", { token: token ?? undefined }).catch(() => []),
       ]);
-      setSummary(dash);
-      setDeals(d);
-      setLeads(l.slice(0, 5));
-      setOrgName(o[0]?.name ?? null);
-      setProperties(p);
-      setNriDashProfile(null);
-      setSvcRequests([]);
-      return true;
+      return {
+        summary,
+        deals,
+        leads: leads.slice(0, 5),
+        orgName: orgs[0]?.name ?? null,
+        properties,
+        nriDashProfile: null as NriDashProfile | null,
+        svcRequests: [] as SvcReq[],
+      };
     },
+    staleTime: 1000 * 60 * 2,
   });
+  const summary = dashboardData?.summary ?? null;
+  const deals = dashboardData?.deals ?? [];
+  const leads = dashboardData?.leads ?? [];
+  const orgName = dashboardData?.orgName ?? null;
+  const properties = dashboardData?.properties ?? [];
+  const nriDashProfile = dashboardData?.nriDashProfile ?? null;
+  const svcRequests = dashboardData?.svcRequests ?? [];
 
   const now = new Date();
   const h = now.getHours();

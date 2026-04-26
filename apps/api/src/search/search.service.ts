@@ -7,7 +7,10 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { DealType, Prisma, PropertyType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import type { SearchPropertiesQueryDto } from './dto/search-properties-query.dto';
+import type {
+  SearchPropertiesQueryDto,
+  SearchSortMode,
+} from './dto/search-properties-query.dto';
 import {
   escapeForWildcard,
   PropertySearchIndexService,
@@ -24,6 +27,17 @@ export type PropertySearchFilters = {
   maxAreaSqft?: number;
   isBankAuction?: boolean;
   distressedLabel?: string;
+};
+
+export type SearchHitRow = {
+  id: string;
+  title: string;
+  city: string;
+  price: unknown;
+  areaSqft: number;
+  distressedLabel?: string;
+  imageUrls?: string[];
+  _score?: number;
 };
 
 const PROPERTY_TYPE_VALUES = new Set<string>(Object.values(PropertyType));
@@ -126,10 +140,18 @@ export class SearchService {
   ) {}
 
   async searchPropertiesQuery(dto: SearchPropertiesQueryDto) {
-    return this.executePropertySearch(queryDtoToFilters(dto));
+    return this.executePropertySearch(queryDtoToFilters(dto), {
+      page: dto.page ?? 1,
+      limit: Math.min(Math.max(dto.limit ?? 20, 1), 100),
+      sort: dto.sort ?? 'relevance',
+    });
   }
 
-  async runSavedSearch(userId: string, savedId: string) {
+  async runSavedSearch(
+    userId: string,
+    savedId: string,
+    opts?: { page?: number; limit?: number; sort?: SearchSortMode },
+  ) {
     const row = await this.prisma.savedSearch.findFirst({
       where: { id: savedId, userId },
     });
@@ -140,7 +162,150 @@ export class SearchService {
     if (!hasTextQuery(filters) && !hasStructuredFilter(filters)) {
       throw new BadRequestException('Saved search has no runnable filters');
     }
-    return this.executePropertySearch(filters);
+    return this.executePropertySearch(filters, {
+      page: opts?.page ?? 1,
+      limit: Math.min(Math.max(opts?.limit ?? 20, 1), 100),
+      sort: opts?.sort ?? 'relevance',
+    });
+  }
+
+  /** Non-blocking: notify owners of saved searches that match a newly listed property. */
+  async notifyInstantSavedSearchMatches(propertyId: string): Promise<void> {
+    try {
+      const property = await this.prisma.property.findUnique({
+        where: { id: propertyId },
+      });
+      if (!property || property.status !== 'active') return;
+
+      const savedRows = await this.prisma.savedSearch.findMany({
+        select: { id: true, userId: true, filters: true },
+      });
+
+      for (const row of savedRows) {
+        const filters = parsePropertySearchFilters(row.filters);
+        if (!hasTextQuery(filters) && !hasStructuredFilter(filters)) continue;
+        const where: Prisma.PropertyWhereInput = {
+          AND: [{ id: propertyId }, this.buildWhere(filters)],
+        };
+        const hit = await this.prisma.property.findFirst({ where });
+        if (!hit) continue;
+        if (row.userId === property.postedById) continue;
+        await this.prisma.notification.create({
+          data: {
+            userId: row.userId,
+            channel: 'in_app',
+            title: 'Saved search match',
+            body: `A new listing matches your saved search (“${property.title.slice(0, 80)}”).`,
+          },
+        });
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Saved-search instant match notification failed for ${propertyId}`,
+        err,
+      );
+    }
+  }
+
+  async autocompleteSuggestions(
+    qRaw: string,
+    field: 'city' | 'locality',
+  ): Promise<string[]> {
+    const q = qRaw.trim();
+    if (q.length < 2) return [];
+    if (!this.propertySearchIndex.isEnabled()) {
+      return this.autocompletePrismaFallback(q, field);
+    }
+    const client = this.propertySearchIndex.getClient();
+    if (!client) return [];
+    try {
+      await this.propertySearchIndex.ensureIndex();
+      const index = this.propertySearchIndex.getIndexName();
+      const keywordField =
+        field === 'city' ? 'city.keyword' : 'localityPublic.keyword';
+      const res = await client.search({
+        index,
+        size: 0,
+        query: {
+          bool: {
+            filter: [{ term: { status: 'active' } }],
+            must: [
+              {
+                wildcard: {
+                  [keywordField]: {
+                    value: `*${escapeForWildcard(q)}*`,
+                    case_insensitive: true,
+                  },
+                },
+              },
+            ],
+          },
+        },
+        aggs: {
+          uniq: {
+            terms: {
+              field: keywordField,
+              size: 8,
+            },
+          },
+        },
+      });
+      const buckets = (
+        res.aggregations?.uniq as { buckets?: { key: string }[] } | undefined
+      )?.buckets;
+      const out = (buckets ?? [])
+        .map((b) => b.key)
+        .filter(Boolean)
+        .slice(0, 5);
+      return out;
+    } catch (err) {
+      this.logger.warn('Elasticsearch autocomplete failed', err);
+      return this.autocompletePrismaFallback(q, field);
+    }
+  }
+
+  private async autocompletePrismaFallback(
+    q: string,
+    field: 'city' | 'locality',
+  ): Promise<string[]> {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    if (field === 'city') {
+      const rows = await this.prisma.property.findMany({
+        where: {
+          status: 'active',
+          city: { contains: q, mode: 'insensitive' },
+        },
+        select: { city: true },
+        take: 40,
+        orderBy: { createdAt: 'desc' },
+      });
+      for (const r of rows) {
+        if (r.city && !seen.has(r.city)) {
+          seen.add(r.city);
+          out.push(r.city);
+          if (out.length >= 5) break;
+        }
+      }
+      return out;
+    }
+    const rows = await this.prisma.property.findMany({
+      where: {
+        status: 'active',
+        localityPublic: { contains: q, mode: 'insensitive' },
+      },
+      select: { localityPublic: true },
+      take: 40,
+      orderBy: { createdAt: 'desc' },
+    });
+    for (const r of rows) {
+      if (r.localityPublic && !seen.has(r.localityPublic)) {
+        seen.add(r.localityPublic);
+        out.push(r.localityPublic);
+        if (out.length >= 5) break;
+      }
+    }
+    return out;
   }
 
   private buildWhere(
@@ -202,74 +367,115 @@ export class SearchService {
     };
   }
 
-  private buildElasticsearchBoolQuery(
+  private buildElasticsearchQuery(
     filters: PropertySearchFilters,
-  ): Record<string, unknown> {
-    const must: Record<string, unknown>[] = [{ term: { status: 'active' } }];
+    sort: SearchSortMode,
+  ): { query: Record<string, unknown>; sort: Record<string, unknown>[] } {
+    const filter: Record<string, unknown>[] = [{ term: { status: 'active' } }];
     if (filters.city?.trim()) {
-      const esc = escapeForWildcard(filters.city.trim().toLowerCase());
-      must.push({
-        wildcard: {
-          cityLower: {
-            value: `*${esc}*`,
-            case_insensitive: true,
-          },
-        },
-      });
+      filter.push({ term: { 'city.keyword': filters.city.trim() } });
     }
     if (filters.propertyType) {
-      must.push({ term: { propertyType: filters.propertyType } });
+      filter.push({ term: { propertyType: filters.propertyType } });
     }
     if (filters.dealType) {
-      must.push({ term: { dealType: filters.dealType } });
+      filter.push({ term: { dealType: filters.dealType } });
     }
     if (filters.minPrice != null || filters.maxPrice != null) {
       const range: { gte?: number; lte?: number } = {};
-      if (filters.minPrice != null) {
-        range.gte = filters.minPrice;
-      }
-      if (filters.maxPrice != null) {
-        range.lte = filters.maxPrice;
-      }
-      must.push({ range: { price: range } });
+      if (filters.minPrice != null) range.gte = filters.minPrice;
+      if (filters.maxPrice != null) range.lte = filters.maxPrice;
+      filter.push({ range: { price: range } });
     }
     if (filters.minAreaSqft != null || filters.maxAreaSqft != null) {
       const range: { gte?: number; lte?: number } = {};
-      if (filters.minAreaSqft != null) {
-        range.gte = filters.minAreaSqft;
-      }
-      if (filters.maxAreaSqft != null) {
-        range.lte = filters.maxAreaSqft;
-      }
-      must.push({ range: { areaSqft: range } });
+      if (filters.minAreaSqft != null) range.gte = filters.minAreaSqft;
+      if (filters.maxAreaSqft != null) range.lte = filters.maxAreaSqft;
+      filter.push({ range: { areaSqft: range } });
     }
     if (filters.isBankAuction === true || filters.isBankAuction === false) {
-      must.push({ term: { isBankAuction: filters.isBankAuction } });
+      filter.push({ term: { isBankAuction: filters.isBankAuction } });
     }
     if (filters.distressedLabel) {
-      must.push({ term: { distressedLabel: filters.distressedLabel } });
+      filter.push({ term: { distressedLabel: filters.distressedLabel } });
     }
+
+    const must: Record<string, unknown>[] = [];
     const trimmed = (filters.q ?? '').trim();
     if (trimmed) {
       must.push({
-        bool: {
-          should: [
-            { match: { title: { query: trimmed, operator: 'and' } } },
-            { match: { city: { query: trimmed, operator: 'and' } } },
-            {
-              match: {
-                localityPublic: { query: trimmed, operator: 'and' },
-              },
-            },
+        multi_match: {
+          query: trimmed,
+          fields: [
+            'title^2',
+            'description',
+            'city',
+            'areaPublic',
+            'localityPublic',
           ],
-          minimum_should_match: 1,
+          type: 'best_fields',
+          fuzziness: 'AUTO',
         },
       });
     }
-    return { bool: { must } };
+
+    const innerBool: Record<string, unknown> = {
+      filter,
+      should: [{ term: { verified: { value: true, boost: 1.25 } } }],
+      minimum_should_match: 0,
+    };
+    if (must.length) {
+      innerBool.must = must;
+    } else {
+      innerBool.must = [{ match_all: {} }];
+    }
+
+    const query: Record<string, unknown> = {
+      function_score: {
+        query: { bool: innerBool },
+        boost_mode: 'multiply',
+        score_mode: 'multiply',
+        functions: [
+          {
+            field_value_factor: {
+              field: 'matchCount',
+              factor: 0.08,
+              modifier: 'log1p',
+              missing: 0,
+            },
+          },
+          {
+            gauss: {
+              createdAt: {
+                origin: 'now',
+                scale: '120d',
+                decay: 0.65,
+              },
+            },
+            weight: 0.35,
+          },
+        ],
+      },
+    };
+
+    let sortArr: Record<string, unknown>[] = [];
+    if (sort === 'price_asc') {
+      sortArr = [{ price: 'asc' }, { _score: 'desc' }];
+    } else if (sort === 'price_desc') {
+      sortArr = [{ price: 'desc' }, { _score: 'desc' }];
+    } else if (sort === 'newest') {
+      sortArr = [{ createdAt: 'desc' }];
+    } else {
+      sortArr = [{ _score: 'desc' }, { createdAt: 'desc' }];
+    }
+
+    return { query, sort: sortArr };
   }
 
-  private async executePropertySearch(filters: PropertySearchFilters) {
+  private async executePropertySearch(
+    filters: PropertySearchFilters,
+    opts: { page: number; limit: number; sort: SearchSortMode },
+  ) {
     const esConfigured = Boolean(
       this.config.get<string>('ELASTICSEARCH_URL')?.trim(),
     );
@@ -280,17 +486,15 @@ export class SearchService {
 
     if (!hasTextQuery(filters) && !hasStructuredFilter(filters)) {
       return {
-        hits: [] as {
-          id: string;
-          title: string;
-          city: string;
-          price: unknown;
-          areaSqft: number;
-        }[],
+        hits: [] as SearchHitRow[],
+        total: 0,
         tookMs: 0,
         note: 'Enter a search query or choose at least one filter.',
+        fallback: false,
       };
     }
+
+    const from = (opts.page - 1) * opts.limit;
 
     if (this.propertySearchIndex.isEnabled()) {
       const client = this.propertySearchIndex.getClient();
@@ -298,15 +502,33 @@ export class SearchService {
         try {
           await this.propertySearchIndex.ensureIndex();
           const index = this.propertySearchIndex.getIndexName();
+          const { query, sort } = this.buildElasticsearchQuery(
+            filters,
+            opts.sort,
+          );
           const res = await client.search({
             index,
-            query: this.buildElasticsearchBoolQuery(filters),
-            size: 24,
-            sort: [{ createdAt: 'desc' }],
-            _source: ['id', 'title', 'city', 'price', 'areaSqft'],
+            query: query as never,
+            sort: sort as never,
+            from,
+            size: opts.limit,
+            track_total_hits: true,
+            _source: [
+              'id',
+              'title',
+              'city',
+              'price',
+              'areaSqft',
+              'distressedLabel',
+              'imageUrls',
+            ],
           });
           const tookMs =
             typeof res.took === 'number' ? res.took : Date.now() - started;
+          const total =
+            typeof res.hits.total === 'number'
+              ? res.hits.total
+              : (res.hits.total as { value?: number })?.value ?? 0;
           const hits = (res.hits.hits ?? []).map((h) => {
             const src = (h._source ?? {}) as Record<string, unknown>;
             const title =
@@ -323,12 +545,22 @@ export class SearchService {
               city,
               price: src.price ?? null,
               areaSqft: Number(src.areaSqft ?? 0),
+              distressedLabel:
+                typeof src.distressedLabel === 'string'
+                  ? src.distressedLabel
+                  : undefined,
+              imageUrls: Array.isArray(src.imageUrls)
+                ? (src.imageUrls as string[])
+                : undefined,
+              _score: typeof h._score === 'number' ? h._score : undefined,
             };
           });
           return {
             hits,
+            total,
             tookMs,
-            note: `Elasticsearch (index ${index}). Token/wildcard behavior may differ slightly from PostgreSQL.`,
+            note: `Elasticsearch index ${index}.`,
+            fallback: false,
           };
         } catch (err) {
           this.logger.warn(
@@ -340,23 +572,38 @@ export class SearchService {
     }
 
     const where = this.buildWhere(filters);
-    const rows = await this.prisma.property.findMany({
-      where,
-      take: 24,
-      orderBy: { createdAt: 'desc' },
-    });
-    const hits = rows.map((p) => ({
+    let orderBy: Prisma.PropertyOrderByWithRelationInput = {
+      createdAt: 'desc',
+    };
+    if (opts.sort === 'price_asc') {
+      orderBy = { price: 'asc' };
+    } else if (opts.sort === 'price_desc') {
+      orderBy = { price: 'desc' };
+    }
+    const [total, rows] = await this.prisma.$transaction([
+      this.prisma.property.count({ where }),
+      this.prisma.property.findMany({
+        where,
+        skip: from,
+        take: opts.limit,
+        orderBy,
+      }),
+    ]);
+    const hits: SearchHitRow[] = rows.map((p) => ({
       id: p.id,
       title: p.title,
       city: p.city,
       price: p.price,
       areaSqft: p.areaSqft,
+      distressedLabel: p.distressedLabel,
+      imageUrls: p.imageUrls?.length ? [p.imageUrls[0]] : undefined,
+      _score: undefined,
     }));
     const tookMs = Date.now() - started;
     const note = esConfigured
       ? 'PostgreSQL fallback (Elasticsearch error or unreachable).'
       : 'PostgreSQL text + filters. Set ELASTICSEARCH_URL for ES-backed search.';
-    return { hits, tookMs, note };
+    return { hits, total, tookMs, note, fallback: true };
   }
 
   async adminReindexElasticsearch(): Promise<{ indexed: number }> {

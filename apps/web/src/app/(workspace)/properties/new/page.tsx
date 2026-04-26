@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, FileText, Image as ImageIcon, MapPin, Send, ShieldAlert } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { apiFetch } from "@/lib/api";
@@ -14,6 +15,7 @@ const DT = ["SALE", "RENT"] as const;
 export default function NewPropertyPage() {
   const { token, user } = useAuth();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [err, setErr] = useState<string | null>(null);
   const [uploadMsg, setUploadMsg] = useState<string | null>(null);
   const [form, setForm] = useState({
@@ -70,6 +72,11 @@ export default function NewPropertyPage() {
           negotiable: form.negotiable,
         }),
       });
+      await queryClient.invalidateQueries({ queryKey: ["properties"] });
+      await queryClient.invalidateQueries({ queryKey: ["properties-mine"] });
+      await queryClient.invalidateQueries({ queryKey: ["properties-market"] });
+      await queryClient.invalidateQueries({ queryKey: ["dashboard-all"] });
+      await queryClient.invalidateQueries({ queryKey: ["matches"] });
       router.push("/properties");
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Error");

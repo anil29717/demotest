@@ -35,3 +35,23 @@ export async function apiFetch<T>(
 
   return JSON.parse(text) as T;
 }
+
+/** Same as fetch + JSON parse but returns response headers (e.g. X-Search-Fallback). */
+export async function apiFetchJsonWithHeaders<T>(
+  path: string,
+  init?: RequestInit & { token?: string },
+): Promise<{ data: T; headers: Headers }> {
+  const { token, ...rest } = init ?? {};
+  const headers = new Headers(rest.headers);
+  if (!headers.has("Content-Type") && rest.body != null) {
+    headers.set("Content-Type", "application/json");
+  }
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const res = await fetch(apiUrl(path), { ...rest, headers });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(text || res.statusText);
+  }
+  const data = (text.trim() ? JSON.parse(text) : undefined) as T;
+  return { data, headers: res.headers };
+}

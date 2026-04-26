@@ -70,6 +70,73 @@ enum DealStage {
   CLOSURE
 }
 
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELLED
+  EXPIRED
+}
+
+enum BillingInterval {
+  MONTHLY
+  YEARLY
+}
+
+enum PaymentType {
+  SUBSCRIPTION
+  TOKEN
+  FEE
+}
+
+enum PaymentStatus {
+  CREATED
+  CAPTURED
+  FAILED
+  REFUNDED
+}
+
+enum InvoiceType {
+  SUBSCRIPTION
+  PLATFORM_FEE
+  TOKEN
+  OTHER
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PAID
+  OVERDUE
+}
+
+enum EscrowStatus {
+  INITIATED
+  HELD
+  RELEASED
+  REFUNDED
+  DISPUTED
+  FROZEN
+}
+
+enum EscrowTransactionType {
+  HOLD
+  RELEASE
+  REFUND
+  FREEZE
+}
+
+enum ChatThreadType {
+  DEAL
+  DIRECT
+  SUPPORT
+}
+
+enum ChatMessageType {
+  TEXT
+  FILE
+  IMAGE
+  SYSTEM
+}
+
 model User {
   id         String   @id @default(cuid())
   phoneHash  String   @unique
@@ -84,6 +151,7 @@ model User {
   serviceAreas        String[] @default([])
   reraId              String?
   reputationScore     Float    @default(0)
+  razorpayCustomerId  String?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -104,6 +172,14 @@ model User {
   nriProfile          NriProfile?
   hniProfile          HniProfile?
   investorPreference InvestorPreference?
+  subscriptions       Subscription[]
+  payments            Payment[]
+  invoices            Invoice[]
+  escrowHeld          EscrowAccount[]      @relation("EscrowHolder")
+  escrowBeneficiary   EscrowAccount[]      @relation("EscrowBeneficiary")
+  escrowBroker        EscrowAccount[]      @relation("EscrowBroker")
+  escrowTxFrom        EscrowTransaction[] @relation("EscrowTxFrom")
+  escrowTxTo          EscrowTransaction[] @relation("EscrowTxTo")
 }
 
 model Organization {
@@ -175,6 +251,8 @@ model Requirement {
   areaSqftMax  Float
   urgency      Urgency
   tag          String       @default("WARM")
+  /// APP | whatsapp_auto | …
+  source       String       @default("APP")
   active       Boolean      @default(true)
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
@@ -185,14 +263,23 @@ model Requirement {
 }
 
 model Match {
-  id            String      @id @default(cuid())
-  propertyId    String
-  requirementId String
-  matchScore    Float
-  matchFactors  Json
-  status        MatchStatus @default(ACTIVE)
-  hotMatch      Boolean     @default(false)
-  createdAt     DateTime    @default(now())
+  id               String      @id @default(cuid())
+  propertyId       String
+  requirementId    String
+  /// Combined ML + rule score (same as matchScore when ML unavailable)
+  matchScore       Float
+  matchFactors     Json
+  status             MatchStatus @default(ACTIVE)
+  hotMatch           Boolean     @default(false)
+  mlScore            Float?
+  combinedScore      Float?
+  mlConfidence       Float?
+  mlExplanation      Json?
+  feedbackGiven      Boolean     @default(false)
+  accepted           Boolean?
+  convertedToLead    Boolean     @default(false)
+  convertedToDeal    Boolean     @default(false)
+  createdAt          DateTime    @default(now())
 
   property    Property    @relation(fields: [propertyId], references: [id], onDelete: Cascade)
   requirement Requirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
@@ -223,6 +310,143 @@ model Deal {
   requirement  Requirement  @relation(fields: [requirementId], references: [id])
   documents    Document[]
   serviceReqs  ServiceRequest[]
+  payments       Payment[]
+  escrowAccount  EscrowAccount?
+  invoices       Invoice[]
+  chatThread     ChatThread?
+}
+
+model ChatThread {
+  id             String         @id @default(cuid())
+  dealId         String?        @unique
+  threadType     ChatThreadType @default(DEAL)
+  participants   String[]
+  title          String?
+  lastMessageAt  DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  deal     Deal?         @relation(fields: [dealId], references: [id], onDelete: SetNull)
+  messages ChatMessage[]
+
+  @@index([lastMessageAt])
+}
+
+model ChatMessage {
+  id          String          @id @default(cuid())
+  threadId    String
+  senderId    String
+  content     String          @default("")
+  messageType ChatMessageType @default(TEXT)
+  fileUrl     String?
+  fileName    String?
+  fileSize    Int?
+  readBy      String[]        @default([])
+  editedAt    DateTime?
+  deletedAt   DateTime?
+  createdAt   DateTime        @default(now())
+
+  thread ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  @@index([threadId, createdAt])
+}
+
+model Subscription {
+  id                       String              @id @default(cuid())
+  userId                   String
+  planName                 String
+  status                   SubscriptionStatus
+  razorpaySubscriptionId   String?
+  currentPeriodStart       DateTime
+  currentPeriodEnd         DateTime
+  amountPaise              Int
+  interval                 BillingInterval
+  cancelledAt              DateTime?
+  createdAt                DateTime            @default(now())
+  updatedAt                DateTime            @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payments Payment[]
+}
+
+model Payment {
+  id                 String        @id @default(cuid())
+  userId             String
+  type               PaymentType
+  amountPaise        Int
+  status             PaymentStatus @default(CREATED)
+  razorpayOrderId    String?       @unique
+  razorpayPaymentId  String?
+  razorpaySignature  String?
+  dealId             String?
+  subscriptionId     String?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deal         Deal?         @relation(fields: [dealId], references: [id], onDelete: SetNull)
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  invoices     Invoice[]
+}
+
+model Invoice {
+  id          String        @id @default(cuid())
+  userId      String
+  type        InvoiceType
+  amountPaise Int
+  status      InvoiceStatus
+  dueDate     DateTime?
+  paidAt      DateTime?
+  lineItems   Json
+  paymentId   String?
+  dealId      String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payment Payment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  deal    Deal?    @relation(fields: [dealId], references: [id], onDelete: SetNull)
+}
+
+model EscrowAccount {
+  id                String       @id @default(cuid())
+  dealId            String       @unique
+  amountPaise       Int
+  currency          String       @default("INR")
+  status            EscrowStatus @default(INITIATED)
+  holderId          String
+  beneficiaryId     String
+  brokerId          String?
+  razorpayOrderId   String?      @unique
+  razorpayPaymentId String?
+  heldAt            DateTime?
+  releasedAt        DateTime?
+  refundedAt        DateTime?
+  frozenAt          DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  deal          Deal                  @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  holder        User                  @relation("EscrowHolder", fields: [holderId], references: [id])
+  beneficiary   User                  @relation("EscrowBeneficiary", fields: [beneficiaryId], references: [id])
+  broker        User?                 @relation("EscrowBroker", fields: [brokerId], references: [id])
+  transactions  EscrowTransaction[]
+}
+
+model EscrowTransaction {
+  id              String                 @id @default(cuid())
+  escrowAccountId String
+  type            EscrowTransactionType
+  amountPaise     Int
+  fromUserId      String?
+  toUserId        String?
+  razorpayId      String?
+  notes           String?
+  createdAt       DateTime               @default(now())
+
+  escrow   EscrowAccount @relation(fields: [escrowAccountId], references: [id], onDelete: Cascade)
+  fromUser User?         @relation("EscrowTxFrom", fields: [fromUserId], references: [id])
+  toUser   User?         @relation("EscrowTxTo", fields: [toUserId], references: [id])
 }
 
 model Lead {
@@ -234,6 +458,8 @@ model Lead {
   source         String
   status         LeadStatus
   pipelineStage  String?
+  /// CRM tag e.g. SELLER_INQUIRY, INSTITUTIONAL (WhatsApp NLP routing)
+  tag            String?
   propertyId     String?
   institutionId  String?
   requirementId  String?
@@ -426,6 +652,15 @@ model WhatsAppIngest {
   messageType String?
   /// WhatsApp ID (digits) from `messages[].from`
   fromWaId    String?
+  /// Inbound text used for NLP (snippet)
+  messageText String?
+  nlpIntent       String?
+  nlpConfidence   Float?
+  nlpExtracted    Json?
+  routingStatus   String?
+  routedAt        DateTime?
+  createdLeadId       String?
+  createdRequirementId String?
   createdAt   DateTime @default(now())
 }
 

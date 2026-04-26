@@ -15,6 +15,7 @@ import { createHash, createHmac, timingSafeEqual } from 'crypto';
 import type { Request, Response } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
 import { WhatsappIngestService } from './whatsapp-ingest.service';
+import { WhatsappRoutingService } from './whatsapp-routing.service';
 import { WhatsappWebhookMetricsService } from './whatsapp-webhook-metrics.service';
 
 type Payload = Record<string, unknown>;
@@ -73,6 +74,7 @@ export class WhatsappController {
     private readonly prisma: PrismaService,
     private readonly whatsappIngest: WhatsappIngestService,
     private readonly metrics: WhatsappWebhookMetricsService,
+    private readonly routing: WhatsappRoutingService,
   ) {}
 
   /** Meta / WhatsApp Cloud API subscription verification (GET) */
@@ -152,20 +154,11 @@ export class WhatsappController {
     let mappedIntent = parsed?.mappedIntent ?? null;
     const messageType = parsed?.messageType ?? null;
     const fromWaId = parsed?.fromWaId ?? null;
-
-    if (orgId && parsed) {
-      const leadName =
-        parsed.textSnippet?.trim() ||
-        parsed.buttonPayload ||
-        parsed.interactiveId ||
-        'WhatsApp lead';
-      leadId = await this.whatsappIngest.createLeadForInbound({
-        organizationId: orgId,
-        leadName,
-        fromWaId,
-        mappedIntent: parsed.mappedIntent,
-      });
-    }
+    const messageText =
+      parsed?.textSnippet?.trim() ||
+      parsed?.buttonPayload ||
+      parsed?.interactiveId ||
+      null;
 
     // Legacy: explicit organizationId + leadName on JSON body (non-Meta tests)
     if (!leadId && typeof payload.organizationId === 'string') {
@@ -211,7 +204,16 @@ export class WhatsappController {
         messageType,
         fromWaId,
         leadId,
+        messageText,
       },
+    });
+
+    setImmediate(() => {
+      void this.routing.afterIngestCreated(row.id, orgId).catch((err) => {
+        this.logger.warn(
+          `Deferred WhatsApp NLP/routing failed ingest=${row.id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
     });
 
     this.metrics.recordReceived(Date.now() - t0, {

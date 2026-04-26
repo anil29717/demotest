@@ -230,13 +230,13 @@ export default function NriVerticalPage() {
   }, []);
 
   useEffect(() => {
-    if (!token) {
+    if (!token || !user) {
       setLoading(false);
       return;
     }
     setLoading(true);
     void Promise.all([loadProfile(), loadProperties(), loadRequests()]).finally(() => setLoading(false));
-  }, [token, loadProfile, loadProperties, loadRequests]);
+  }, [token, user, loadProfile, loadProperties, loadRequests]);
 
   async function saveProfile(e: React.FormEvent) {
     e.preventDefault();

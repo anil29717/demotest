@@ -30,6 +30,7 @@ export function middleware(request: NextRequest) {
     pathname.startsWith("/auctions") ||
     pathname.startsWith("/billing") ||
     pathname.startsWith("/broker-network") ||
+    pathname.startsWith("/chat") ||
     pathname.startsWith("/compliance") ||
     pathname.startsWith("/crm") ||
     pathname.startsWith("/deals") ||
@@ -42,6 +43,7 @@ export function middleware(request: NextRequest) {
     pathname.startsWith("/organizations") ||
     pathname.startsWith("/partners") ||
     pathname.startsWith("/phase2") ||
+    pathname.startsWith("/profile") ||
     pathname.startsWith("/properties") ||
     pathname.startsWith("/reputation") ||
     pathname.startsWith("/requirements") ||

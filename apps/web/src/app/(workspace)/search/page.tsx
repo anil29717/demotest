@@ -1,14 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Bell, Gavel, Search, TrendingUp } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
-import { apiFetch, apiUrl } from "@/lib/api";
+import { apiFetch, apiFetchJsonWithHeaders } from "@/lib/api";
 import { formatINR } from "@/lib/format";
 import toast from "react-hot-toast";
+
+type SearchSortMode = "relevance" | "price_asc" | "price_desc" | "newest";
 
 type Hit = {
   id: string;
@@ -17,6 +19,7 @@ type Hit = {
   price: unknown;
   areaSqft: number;
   distressedLabel?: string;
+  _score?: number;
 };
 type Saved = { id: string; name: string; filters: unknown; createdAt: string };
 
@@ -50,7 +53,7 @@ const emptyFilters = (): FiltersState => ({
   distressedLabel: "",
 });
 
-function buildQueryString(f: FiltersState): string {
+function filtersToSearchParams(f: FiltersState): URLSearchParams {
   const p = new URLSearchParams();
   if (f.q.trim()) p.set("q", f.q.trim());
   if (f.city.trim()) p.set("city", f.city.trim());
@@ -68,7 +71,11 @@ function buildQueryString(f: FiltersState): string {
     p.set("isBankAuction", f.isBankAuction);
   }
   if (f.distressedLabel.trim()) p.set("distressedLabel", f.distressedLabel.trim());
-  return p.toString();
+  return p;
+}
+
+function buildQueryString(f: FiltersState): string {
+  return filtersToSearchParams(f).toString();
 }
 
 function hasRunnableFilters(f: FiltersState): boolean {
@@ -119,6 +126,8 @@ function summarizeSavedFilters(filters: unknown): string {
   return parts.length ? parts.join(" · ") : "(no filters)";
 }
 
+const PAGE_LIMIT = 20;
+
 export default function SearchPage() {
   const { token, user } = useAuth();
   const [f, setF] = useState<FiltersState>(() => emptyFilters());
@@ -128,6 +137,12 @@ export default function SearchPage() {
   const [saveName, setSaveName] = useState("");
   const [busy, setBusy] = useState(false);
   const [nriFriendly, setNriFriendly] = useState(false);
+  const [sort, setSort] = useState<SearchSortMode>("relevance");
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState<number | null>(null);
+  const [tookMs, setTookMs] = useState<number | null>(null);
+  const [searchFallback, setSearchFallback] = useState(false);
+  const [kwSuggestions, setKwSuggestions] = useState<string[]>([]);
   const { refetch: refreshSaved } = useQuery({
     queryKey: ["saved-searches", token],
     enabled: Boolean(token),
@@ -138,12 +153,50 @@ export default function SearchPage() {
     },
   });
 
-  async function runSearch() {
-    const qs = buildQueryString(f);
-    const url = qs ? apiUrl(`/search/properties?${qs}`) : apiUrl("/search/properties");
-    const res = await fetch(url).then((r) => r.json());
-    setHits(res.hits ?? []);
-    setNote(res.note ?? "");
+  useEffect(() => {
+    const q = f.q.trim();
+    if (q.length < 2) {
+      setKwSuggestions([]);
+      return;
+    }
+    const id = window.setTimeout(() => {
+      void Promise.all([
+        apiFetch<string[]>(`/search/autocomplete?${new URLSearchParams({ q, field: "city" })}`),
+        apiFetch<string[]>(`/search/autocomplete?${new URLSearchParams({ q, field: "locality" })}`),
+      ])
+        .then(([c, l]) => {
+          const merged = [...new Set([...(c ?? []), ...(l ?? [])])].slice(0, 10);
+          setKwSuggestions(merged);
+        })
+        .catch(() => setKwSuggestions([]));
+    }, 280);
+    return () => window.clearTimeout(id);
+  }, [f.q]);
+
+  async function runSearch(nextPage?: number, explicitSort?: SearchSortMode) {
+    const pnum = nextPage ?? page;
+    const srt = explicitSort ?? sort;
+    if (explicitSort != null) setSort(explicitSort);
+    const params = filtersToSearchParams(f);
+    params.set("sort", srt);
+    params.set("page", String(pnum));
+    params.set("limit", String(PAGE_LIMIT));
+    const path = `/search/properties?${params.toString()}`;
+    const { data, headers } = await apiFetchJsonWithHeaders<{
+      hits?: Hit[];
+      total?: number;
+      tookMs?: number;
+      note?: string;
+      fallback?: boolean;
+    }>(path);
+    setHits(data.hits ?? []);
+    setNote(data.note ?? "");
+    setTotal(typeof data.total === "number" ? data.total : null);
+    setTookMs(typeof data.tookMs === "number" ? data.tookMs : null);
+    setSearchFallback(
+      Boolean(data.fallback) || String(headers.get("X-Search-Fallback") ?? "").toLowerCase() === "true",
+    );
+    setPage(pnum);
   }
 
   async function saveCurrent() {
@@ -171,11 +224,26 @@ export default function SearchPage() {
     if (!token) return;
     setBusy(true);
     try {
-      const res = await apiFetch<{ hits: Hit[]; note?: string }>(`/search/saved/${id}/run`, {
-        token,
-      });
-      setHits(res.hits ?? []);
-      setNote(res.note ?? "");
+      const runQs = new URLSearchParams({
+        page: "1",
+        limit: String(PAGE_LIMIT),
+        sort,
+      }).toString();
+      const { data, headers } = await apiFetchJsonWithHeaders<{
+        hits?: Hit[];
+        total?: number;
+        tookMs?: number;
+        note?: string;
+        fallback?: boolean;
+      }>(`/search/saved/${id}/run?${runQs}`, { token });
+      setHits(data.hits ?? []);
+      setNote(data.note ?? "");
+      setTotal(typeof data.total === "number" ? data.total : null);
+      setTookMs(typeof data.tookMs === "number" ? data.tookMs : null);
+      setSearchFallback(
+        Boolean(data.fallback) || String(headers.get("X-Search-Fallback") ?? "").toLowerCase() === "true",
+      );
+      setPage(1);
     } finally {
       setBusy(false);
     }
@@ -250,14 +318,33 @@ export default function SearchPage() {
       </p>
 
       <div className="mt-6 space-y-4 rounded-lg border border-zinc-800 bg-zinc-900/40 p-4">
-        <div>
+        <div className="relative">
           <label className="text-xs font-medium text-zinc-500">Keywords</label>
           <input
             className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
             placeholder="Title, city, locality…"
             value={f.q}
             onChange={(e) => setF((s) => ({ ...s, q: e.target.value }))}
+            autoComplete="off"
           />
+          {kwSuggestions.length > 0 ? (
+            <ul className="absolute left-0 right-0 top-full z-20 mt-1 max-h-48 overflow-auto rounded border border-zinc-700 bg-zinc-900 py-1 text-sm shadow-lg">
+              {kwSuggestions.map((s) => (
+                <li key={s}>
+                  <button
+                    type="button"
+                    className="w-full px-3 py-1.5 text-left text-zinc-200 hover:bg-zinc-800"
+                    onClick={() => {
+                      setF((prev) => ({ ...prev, q: s }));
+                      setKwSuggestions([]);
+                    }}
+                  >
+                    {s}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
@@ -378,17 +465,50 @@ export default function SearchPage() {
             />
           </label>
         ) : null}
-        <button
-          type="button"
-          disabled={busy || !hasRunnableFilters(f)}
-          onClick={() => void runSearch()}
-          className="rounded bg-teal-600 px-4 py-2 text-sm text-white hover:bg-teal-500 disabled:opacity-50"
-        >
-          Search
-        </button>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div className="min-w-[12rem]">
+            <label className="text-xs font-medium text-zinc-500">Sort</label>
+            <select
+              className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
+              value={sort}
+              disabled={busy || !hasRunnableFilters(f)}
+              onChange={(e) => {
+                const v = e.target.value as SearchSortMode;
+                void runSearch(1, v);
+              }}
+            >
+              <option value="relevance">Relevance</option>
+              <option value="price_asc">Price · low to high</option>
+              <option value="price_desc">Price · high to low</option>
+              <option value="newest">Newest</option>
+            </select>
+          </div>
+          <button
+            type="button"
+            disabled={busy || !hasRunnableFilters(f)}
+            onClick={() => void runSearch(1)}
+            className="rounded bg-teal-600 px-4 py-2 text-sm text-white hover:bg-teal-500 disabled:opacity-50"
+          >
+            Search
+          </button>
+        </div>
       </div>
 
-      {note && <p className="mt-3 text-xs text-zinc-500">{note}</p>}
+      {(note || tookMs != null || total != null) && (
+        <p className="mt-3 text-xs text-zinc-500">
+          {total != null ? <>{total.toLocaleString()} results</> : null}
+          {total != null && tookMs != null ? " · " : null}
+          {tookMs != null ? <>{tookMs} ms</> : null}
+          {(total != null || tookMs != null) && note ? " · " : null}
+          {note}
+        </p>
+      )}
+      {searchFallback ? (
+        <p className="mt-2 rounded border border-amber-900/50 bg-amber-950/30 px-3 py-2 text-xs text-amber-200/90">
+          Showing database-backed results while full-text search is unavailable (
+          <span className="font-mono text-amber-100/90">X-Search-Fallback</span>).
+        </p>
+      ) : null}
       <ul className="mt-6 space-y-2 text-sm">
         {displayHits.map((h) => (
           <li key={h.id}>
@@ -398,10 +518,37 @@ export default function SearchPage() {
             <span className="text-zinc-500">
               {" "}
               · {h.city} · {formatINR(Number(h.price ?? 0))} · {h.areaSqft} sqft
+              {sort === "relevance" && typeof h._score === "number" ? (
+                <span className="text-zinc-600"> · score {h._score.toFixed(2)}</span>
+              ) : null}
             </span>
           </li>
         ))}
       </ul>
+
+      {total != null && total > PAGE_LIMIT ? (
+        <div className="mt-4 flex items-center justify-between gap-4 border-t border-zinc-800 pt-4 text-sm text-zinc-400">
+          <button
+            type="button"
+            disabled={busy || page <= 1}
+            onClick={() => void runSearch(page - 1)}
+            className="rounded border border-zinc-600 px-3 py-1.5 hover:bg-zinc-800 disabled:opacity-40"
+          >
+            Previous
+          </button>
+          <span>
+            Page {page} of {Math.max(1, Math.ceil(total / PAGE_LIMIT))}
+          </span>
+          <button
+            type="button"
+            disabled={busy || page >= Math.ceil(total / PAGE_LIMIT)}
+            onClick={() => void runSearch(page + 1)}
+            className="rounded border border-zinc-600 px-3 py-1.5 hover:bg-zinc-800 disabled:opacity-40"
+          >
+            Next
+          </button>
+        </div>
+      ) : null}
 
       {user?.role === "BUYER" && displayHits.length > 0 ? (
         <motion.div

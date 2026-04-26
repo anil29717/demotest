@@ -61,7 +61,7 @@ export class TransactionOrchestrationService {
           },
         },
       });
-      if (nda?.status !== 'signed') {
+      if (nda?.status !== 'APPROVED') {
         throw new BadRequestException(
           'Institutional deal: buyer must sign NDA before advancing this pipeline.',
         );

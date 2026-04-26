@@ -5,8 +5,8 @@ import Link from "next/link";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
-import { apiUrl } from "@/lib/api";
-import { formatINR } from "@/lib/format";
+import { apiFetch } from "@/lib/api";
+import { formatINR, timeAgo } from "@/lib/format";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageSkeleton } from "@/components/ui/skeleton";
 
@@ -22,23 +22,21 @@ type Auction = {
 };
 
 export default function AuctionsPage() {
-  const { user } = useAuth();
-  const [rows, setRows] = useState<Auction[]>([]);
+  const { token, user } = useAuth();
   const [err, setErr] = useState<string | null>(null);
 
-  const { isLoading } = useQuery({
-    queryKey: ["auctions"],
-    queryFn: async () => {
-      const data = await fetch(apiUrl("/verticals/auctions?limit=20&offset=0"))
-        .then((r) => r.json())
-        .catch(() => {
-          setErr("Could not load auctions");
-          return [];
-        });
-      setRows(data);
-      return true;
-    },
+  const { data: rows = [], isLoading } = useQuery({
+    queryKey: ["auctions", token],
+    enabled: Boolean(token),
+    queryFn: () =>
+      apiFetch<Auction[]>("/verticals/auctions", { token: token ?? undefined }).catch(() => {
+        setErr("Could not load auctions");
+        return [];
+      }),
+    staleTime: 1000 * 60 * 5,
   });
+
+  if (isLoading) return <PageSkeleton count={3} type="card" />;
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -55,6 +53,19 @@ export default function AuctionsPage() {
               <p className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-1 text-[10px] text-amber-300"><Gavel className="h-3 w-3" />HIGH-OPPORTUNITY DEAL</p>
               <p className="mt-2 font-medium text-zinc-100">{a.title}</p>
               <p className="text-zinc-500">{a.city} · Source: {a.source}</p>
+              {a.auctionDate && (
+                <div className="mt-1 flex items-center gap-1 text-xs text-amber-400">
+                  <span>📅</span>
+                  <span>
+                    {new Date(a.auctionDate).toLocaleDateString("en-IN", {
+                      day: "numeric",
+                      month: "short",
+                      year: "numeric",
+                    })}
+                  </span>
+                  <span className="ml-1 text-gray-500">({timeAgo(a.auctionDate)})</span>
+                </div>
+              )}
             </div>
             <div className="grid gap-2 border-t border-[#1f1f1f] px-4 py-3 sm:grid-cols-4">
               <p className="inline-flex items-center gap-1 text-xs text-[#888]"><Banknote className="h-3 w-3" />Reserve {formatINR(Number(a.startPrice ?? 0))}</p>
@@ -74,7 +85,6 @@ export default function AuctionsPage() {
           </li>
         ))}
       </ul>
-      {isLoading ? <PageSkeleton count={4} type="card" /> : null}
       {!rows.length && !err && !isLoading ? <EmptyState icon={Gavel} title="No auctions listed" subtitle="Add auction +" actionLabel="Add auction +" actionHref="/auctions/new" /> : null}
     </div>
   );

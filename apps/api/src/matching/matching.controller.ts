@@ -14,11 +14,15 @@ import type { JwtPayloadUser } from '../common/decorators/current-user.decorator
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { MatchingService } from './matching.service';
-import { IsEnum } from 'class-validator';
+import { IsBoolean, IsEnum, IsOptional } from 'class-validator';
 
 class UpdateMatchStatusDto {
   @IsEnum(MatchStatus)
   status!: MatchStatus;
+
+  @IsOptional()
+  @IsBoolean()
+  accepted?: boolean;
 }
 
 @Controller('matching')
@@ -67,6 +71,8 @@ export class MatchingController {
     @Param('id') id: string,
     @Body() dto: UpdateMatchStatusDto,
   ) {
-    return this.matching.updateStatus(user.sub, id, dto.status);
+    return this.matching.updateStatus(user.sub, id, dto.status, {
+      accepted: dto.accepted,
+    });
   }
 }

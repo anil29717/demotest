@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Post, UseGuards } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -6,7 +6,11 @@ import type { JwtPayloadUser } from '../common/decorators/current-user.decorator
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { IsIn, IsNotEmpty, IsString } from 'class-validator';
+import { BillingService } from './billing.service';
+import { BillingCheckoutDto } from './dto/billing-checkout.dto';
+import { BillingVerifyDto } from './dto/billing-verify.dto';
 
+/** Phase 1 checkout DTO — preserved for /billing/checkout-session */
 class CheckoutDto {
   @IsString()
   @IsNotEmpty()
@@ -16,7 +20,6 @@ class CheckoutDto {
   sku!: 'broker_pro' | 'nri_services' | 'institutional_listing';
 }
 
-/** Phase 1: stub — wire Stripe/Razorpay when merchant account is ready */
 @Controller('billing')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(
@@ -28,33 +31,50 @@ class CheckoutDto {
   UserRole.INSTITUTIONAL_SELLER,
 )
 export class BillingController {
+  constructor(private readonly billing: BillingService) {}
+
   @Get('plans')
-  plans() {
-    return {
-      plans: [
-        {
-          id: 'broker_pro',
-          name: 'Broker Pro',
-          priceInrAnnual: 24999,
-          entitlements: ['crm_advanced', 'lead_routing'],
-        },
-        {
-          id: 'nri_services',
-          name: 'NRI Services',
-          priceInrAnnual: 14999,
-          entitlements: ['tax_pack', 'concierge'],
-        },
-        {
-          id: 'institutional_listing',
-          name: 'Institutional listing',
-          priceInrPerDeal: 50000,
-          entitlements: ['data_room', 'nda_workflow'],
-        },
-      ],
-      note: 'Stub catalog. Stripe/Razorpay product ids map in Phase 2 merchant setup.',
-    };
+  plans(@CurrentUser() user: JwtPayloadUser) {
+    return this.billing.getPlans(user.sub);
   }
 
+  @Post('checkout')
+  checkoutRazorpay(
+    @CurrentUser() user: JwtPayloadUser,
+    @Body() dto: BillingCheckoutDto,
+  ) {
+    return this.billing.createCheckoutSession(user.sub, dto.planId, dto.interval);
+  }
+
+  @Post('verify')
+  verify(
+    @CurrentUser() user: JwtPayloadUser,
+    @Body() dto: BillingVerifyDto,
+  ) {
+    return this.billing.verifyAndActivate(
+      dto.razorpay_order_id,
+      dto.razorpay_payment_id,
+      dto.razorpay_signature,
+      user.sub,
+    );
+  }
+
+  @Get('subscription')
+  subscription(@CurrentUser() user: JwtPayloadUser) {
+    return this.billing.getCurrentSubscription(user.sub);
+  }
+
+  @Delete('subscription')
+  cancelSubscription(@CurrentUser() user: JwtPayloadUser) {
+    return this.billing.cancelSubscription(user.sub);
+  }
+
+  @Get('invoices')
+  invoices(@CurrentUser() user: JwtPayloadUser) {
+    return this.billing.getInvoices(user.sub);
+  }
+
+  /** Phase 1 stub — unchanged route for existing clients */
   @Post('checkout-session')
   checkout(@CurrentUser() user: JwtPayloadUser, @Body() dto: CheckoutDto) {
     return {

@@ -2,7 +2,6 @@
 
 import { Award, CheckCircle, Clock, Globe, ShieldCheck, TrendingUp } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { PageSkeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/contexts/auth-context";
@@ -10,38 +9,36 @@ import { apiFetch } from "@/lib/api";
 
 export default function ReputationPage() {
   const { token, user } = useAuth();
-  const [data, setData] = useState<{
-    reputationScore: number;
-    closedDealsAttributed: number;
-    note: string;
-  } | null>(null);
-  const [graph, setGraph] = useState<{
-    nodes: { id: string; kind: string }[];
-    edges: { from: string; to: string; kind: string; weight: number }[];
-    note?: string;
-  } | null>(null);
-
-  const { isLoading, refetch } = useQuery({
+  const { data: repData, isLoading, refetch } = useQuery({
     queryKey: ["reputation", user?.id, token],
     enabled: Boolean(token && user?.id),
     queryFn: async () => {
       const userId = user?.id ?? "";
-      const [score, graphData] = await Promise.all([
-        apiFetch("/reputation/me", { token: token ?? undefined }).catch(() => null),
+      const [score, graph] = await Promise.all([
+        apiFetch<{ trustScore: number; verified: boolean }>(`/user/${userId}/trust-score`, {
+          token: token ?? undefined,
+        }).catch(() => null),
         apiFetch("/reputation/graph/me", { token: token ?? undefined }).catch(() => null),
-        apiFetch(`/reviews/target/${userId}?limit=20&offset=0`, { token: token ?? undefined }).catch(() => []),
       ]);
-      setData(score as { reputationScore: number; closedDealsAttributed: number; note: string } | null);
-      setGraph(
-        graphData as {
-          nodes: { id: string; kind: string }[];
-          edges: { from: string; to: string; kind: string; weight: number }[];
-          note?: string;
-        } | null,
-      );
-      return true;
+      return { score, graph };
     },
+    staleTime: 1000 * 60 * 5,
   });
+  const data = repData?.score
+    ? {
+        reputationScore: Number(repData.score.trustScore ?? 0),
+        closedDealsAttributed: 0,
+        note: repData.score.verified ? "Verified user" : "Unverified user",
+      }
+    : null;
+  const graph = repData?.graph as
+    | {
+        nodes: { id: string; kind: string }[];
+        edges: { from: string; to: string; kind: string; weight: number }[];
+        note?: string;
+      }
+    | null
+    | undefined;
 
   if (!token)
     return (

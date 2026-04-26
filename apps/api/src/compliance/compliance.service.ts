@@ -106,7 +106,7 @@ export class ComplianceService {
         id: '2',
         severity: 'warning',
         title: 'Institutional NDA',
-        body: 'Unmasked financials require signed NDA and data-room access log.',
+        body: 'Unmasked financials require approved NDA and data-room access log.',
       });
     }
 
@@ -119,7 +119,7 @@ export class ComplianceService {
         id: '3',
         severity: 'warning',
         title: 'Data room access',
-        body: 'Log all downloads and restrict unmasked exports to signed parties only.',
+        body: 'Log all downloads and restrict unmasked exports to approved parties only.',
       });
     }
 
@@ -150,7 +150,7 @@ export class ComplianceService {
     return { userId, role, dealId: dealId ?? null, items };
   }
 
-  /** Deals in user orgs with institutional side where NDA is missing or unsigned. */
+  /** Deals in user orgs with institutional side where NDA is missing or unapproved. */
   private async ndaDealGaps(userId: string): Promise<ComplianceFeedItem[]> {
     const memberships = await this.prisma.organizationMember.findMany({
       where: { userId },
@@ -184,7 +184,7 @@ export class ComplianceService {
           },
         },
       });
-      if (!nda || nda.status !== 'signed') {
+      if (!nda || nda.status !== 'APPROVED') {
         out.push({
           id: `nda-deal-${d.id}`,
           severity: 'warning',

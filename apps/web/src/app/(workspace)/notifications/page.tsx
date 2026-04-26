@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, CheckCheck } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { apiFetch } from "@/lib/api";
@@ -19,31 +19,29 @@ type N = {
 
 export default function NotificationsPage() {
   const { token } = useAuth();
-  const [items, setItems] = useState<N[]>([]);
+  const queryClient = useQueryClient();
   const [tab, setTab] = useState<"all" | "matches" | "deals" | "compliance" | "system">("all");
 
-  const { isLoading, refetch } = useQuery({
+  const { data: items = [], isLoading } = useQuery({
     queryKey: ["notifications", token],
     enabled: Boolean(token),
-    queryFn: async () => {
-      const data = await apiFetch<N[]>("/notifications?limit=20&offset=0", { token: token ?? undefined }).catch(
+    queryFn: () =>
+      apiFetch<N[]>("/notifications?limit=50", { token: token ?? undefined }).catch(
         () => [],
-      );
-      setItems(data);
-      return true;
-    },
+      ),
+    staleTime: 1000 * 30,
   });
 
   async function markRead(id: string) {
     if (!token) return;
     await apiFetch(`/notifications/${id}/read`, { method: "PUT", token });
-    await refetch();
+    await queryClient.invalidateQueries({ queryKey: ["notifications"] });
   }
 
   async function markAllRead() {
     if (!token) return;
     await Promise.all(items.filter((n) => !n.read).map((n) => apiFetch(`/notifications/${n.id}/read`, { method: "PUT", token })));
-    await refetch();
+    await queryClient.invalidateQueries({ queryKey: ["notifications"] });
   }
 
   if (!token)

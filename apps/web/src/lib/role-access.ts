@@ -36,7 +36,8 @@ export type NavIconKey =
   | "scroll-text"
   | "star"
   | "rocket"
-  | "download";
+  | "download"
+  | "message-square";
 
 export type NavItem = {
   href: string;
@@ -50,7 +51,16 @@ export type BrokerSidebarItem = {
   label: string;
   icon?: NavIconKey;
   subItem?: boolean;
-  badgeKey?: "properties" | "requirements" | "matches" | "hotLeads" | "deals" | "compliance" | "auctions" | "institutions";
+  badgeKey?:
+    | "properties"
+    | "requirements"
+    | "matches"
+    | "hotLeads"
+    | "deals"
+    | "compliance"
+    | "auctions"
+    | "institutions"
+    | "chatUnread";
 };
 
 export type BrokerSidebarSection = {
@@ -107,6 +117,12 @@ export const SIDEBAR_ITEMS: NavItem[] = [
     roles: ["ADMIN", "BROKER", "NRI", "HNI", "INSTITUTIONAL_BUYER", "INSTITUTIONAL_SELLER"],
   },
   { href: "/deals", label: "Deals", icon: "briefcase", roles: ["ADMIN", "BROKER", "SELLER", "BUYER"] },
+  {
+    href: "/chat",
+    label: "Chat",
+    icon: "message-square",
+    roles: ["ADMIN", "BROKER", "BUYER", "SELLER"],
+  },
   { href: "/crm", label: "CRM leads", icon: "users", roles: ["ADMIN", "BROKER"] },
   {
     href: "/notifications",
@@ -178,7 +194,6 @@ export const SIDEBAR_ITEMS: NavItem[] = [
   { href: "/admin/fraud", label: "Fraud (admin)", icon: "shield-check", roles: ["ADMIN"] },
   { href: "/admin/audit", label: "Audit (admin)", icon: "scroll-text", roles: ["ADMIN"] },
   { href: "/admin/reviews", label: "Reviews (admin)", icon: "star", roles: ["ADMIN"] },
-  { href: "/phase2", label: "Phase 2", icon: "rocket", roles: ["ADMIN"] },
 ];
 
 export const BROKER_SIDEBAR_SECTIONS: BrokerSidebarSection[] = [
@@ -205,6 +220,7 @@ export const BROKER_SIDEBAR_SECTIONS: BrokerSidebarSection[] = [
       { href: "/matches", label: "Matches", icon: "git-merge", badgeKey: "matches" },
       { href: "/crm", label: "CRM leads", icon: "users", badgeKey: "hotLeads" },
       { href: "/deals", label: "Deals", icon: "briefcase", badgeKey: "deals" },
+      { href: "/chat", label: "Chat", icon: "message-square", badgeKey: "chatUnread" },
     ],
   },
   {
@@ -305,7 +321,10 @@ export const BUYER_SIDEBAR_SECTIONS: BrokerSidebarSection[] = [
   },
   {
     category: "Transactions",
-    items: [{ href: "/deals", label: "My deals", icon: "briefcase", badgeKey: "deals" }],
+    items: [
+      { href: "/deals", label: "My deals", icon: "briefcase", badgeKey: "deals" },
+      { href: "/chat", label: "Chat", icon: "message-square", badgeKey: "chatUnread" },
+    ],
   },
   {
     category: "Services",
@@ -462,7 +481,10 @@ export const SELLER_SIDEBAR_SECTIONS: SellerSidebarSection[] = [
   },
   {
     category: "Transactions",
-    items: [{ href: "/deals", label: "Deals", icon: "briefcase", badgeKey: "deals" }],
+    items: [
+      { href: "/deals", label: "Deals", icon: "briefcase", badgeKey: "deals" },
+      { href: "/chat", label: "Chat", icon: "message-square", badgeKey: "chatUnread" },
+    ],
   },
   {
     category: "Services",
@@ -482,6 +504,7 @@ export const SELLER_SIDEBAR_SECTIONS: SellerSidebarSection[] = [
 ];
 
 const PUBLIC_WORKSPACE_PATHS = ["/dashboard"];
+const AUTH_ONLY_PATHS = ["/profile"];
 
 const PROTECTED_PATH_PREFIXES = SIDEBAR_ITEMS.map((i) => i.href).sort(
   (a, b) => b.length - a.length,
@@ -549,6 +572,10 @@ export function itemsForRole(role?: string | null): NavItem[] {
 }
 
 export function canAccessPath(pathname: string, role?: string | null): boolean {
+  const authOnlyMatched = AUTH_ONLY_PATHS.find(
+    (p) => pathname === p || pathname.startsWith(`${p}/`),
+  );
+  if (authOnlyMatched) return Boolean(role);
   const matched = PROTECTED_PATH_PREFIXES.find(
     (p) => pathname === p || pathname.startsWith(`${p}/`),
   );

@@ -2,9 +2,9 @@
 
 import { Landmark, Lock, MapPin, ShieldCheck, TrendingUp } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import { apiFetch } from "@/lib/api";
 import { formatINR, timeAgo } from "@/lib/format";
@@ -25,21 +25,20 @@ type Inst = {
 
 export default function InstitutionsPage() {
   const { token, user } = useAuth();
-  const [rows, setRows] = useState<Inst[]>([]);
+  const queryClient = useQueryClient();
   const [tab, setTab] = useState<"all" | "nda" | "approved" | "mine" | "browse">("all");
   const [filterTx, setFilterTx] = useState<string>("ALL");
 
-  const { isLoading: loading } = useQuery({
+  const { data: rows = [], isLoading } = useQuery({
     queryKey: ["institutions", token],
     enabled: Boolean(token),
-    queryFn: async () => {
-      const data = await apiFetch<Inst[]>("/institutions?limit=20&offset=0", { token: token ?? undefined }).catch(
-        () => [],
-      );
-      setRows(data);
-      return true;
-    },
+    queryFn: () =>
+      apiFetch<Inst[]>("/institutions?limit=20&offset=0", {
+        token: token ?? undefined,
+      }).catch(() => []),
+    staleTime: 1000 * 60 * 2,
   });
+  void queryClient;
 
   useEffect(() => {
     if (user?.role === "INSTITUTIONAL_BUYER") setTab("all");
@@ -73,7 +72,7 @@ export default function InstitutionsPage() {
     );
   }
 
-  if (loading) return <PageSkeleton count={4} type="card" />;
+  if (isLoading) return <PageSkeleton count={4} type="card" />;
 
   return (
     <div className="space-y-4">
@@ -215,7 +214,7 @@ export default function InstitutionsPage() {
           </motion.li>
         ))}
       </ul>
-      {!filtered.length && !loading ? (
+      {!filtered.length && !isLoading ? (
         <EmptyState
           icon={Landmark}
           title="No institutional listings yet"

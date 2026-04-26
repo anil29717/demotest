@@ -3,7 +3,7 @@
 import { ClipboardList, Flame, MapPin, Maximize2, Wallet } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import { Badge } from "@/components/ui/badge";
 import { apiFetch } from "@/lib/api";
@@ -46,26 +46,36 @@ function urgencyBadgeClass(urgency: string): string {
 
 export default function RequirementsPage() {
   const { token, user } = useAuth();
-  const [publicList, setPublicList] = useState<Req[]>([]);
+  const queryClient = useQueryClient();
   const [q, setQ] = useState("");
   const [type, setType] = useState("ALL");
   const [dealType, setDealType] = useState("ALL");
   const [urgency, setUrgency] = useState("ALL");
   const [status, setStatus] = useState("ALL");
 
-  const { isLoading: loading } = useQuery({
-    queryKey: ["requirements", user?.role, token],
-    queryFn: async () => {
-      if ((user?.role === "NRI" || user?.role === "BUYER" || user?.role === "INSTITUTIONAL_BUYER") && token) {
-        const rows = await apiFetch<Req[]>("/requirements/mine?limit=20&offset=0", { token }).catch(() => []);
-        setPublicList(rows);
-        return true;
-      }
-      const rows = await apiFetch<Req[]>("/requirements?limit=20&offset=0", { token: token ?? undefined }).catch(() => []);
-      setPublicList(rows);
-      return true;
-    },
+  const isBuyerRole = ["NRI", "BUYER", "INSTITUTIONAL_BUYER"].includes(user?.role ?? "");
+
+  const { data: mineList = [], isLoading: loadingMine } = useQuery({
+    queryKey: ["requirements-mine", token],
+    enabled: Boolean(token) && isBuyerRole,
+    queryFn: () =>
+      apiFetch<Req[]>("/requirements/mine?limit=20&offset=0", { token: token ?? undefined })
+        .catch(() => []),
+    staleTime: 1000 * 60 * 2,
   });
+
+  const { data: allList = [], isLoading: loadingAll } = useQuery({
+    queryKey: ["requirements", user?.role, token],
+    enabled: Boolean(token) && !isBuyerRole,
+    queryFn: () =>
+      apiFetch<Req[]>("/requirements?limit=20&offset=0", {
+        token: token ?? undefined,
+      }).catch(() => []),
+    staleTime: 1000 * 60 * 2,
+  });
+  const publicList = isBuyerRole ? mineList : allList;
+  const loading = loadingMine || loadingAll;
+  void queryClient;
   const rows = useMemo(
     () =>
       publicList.filter((r) => {

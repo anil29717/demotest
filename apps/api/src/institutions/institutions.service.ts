@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -60,9 +60,9 @@ export class InstitutionsService {
       },
     });
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    /** Phase 1: NDA signed + qualified role/verification unlocks full record. */
+    /** Phase 1: NDA approved + qualified role/verification unlocks full record. */
     const canSee =
-      nda?.status === 'signed' &&
+      nda?.status === 'APPROVED' &&
       (user?.role === 'INSTITUTIONAL_BUYER' ||
         user?.role === 'ADMIN' ||
         user?.role === 'BROKER' ||
@@ -89,7 +89,20 @@ export class InstitutionsService {
   }
 
   /** Module 22 — institutional DD pack outline (template; evidence uploads Phase 2). */
-  async ddPackOutline(institutionId: string) {
+  async ddPackOutline(institutionId: string, userId: string) {
+    const approvedNda = await this.prisma.nda.findFirst({
+      where: {
+        institutionId,
+        userId,
+        status: 'APPROVED',
+      },
+    });
+    if (!approvedNda) {
+      throw new ForbiddenException(
+        'NDA approval required to access due diligence pack',
+      );
+    }
+
     const row = await this.prisma.institution.findUnique({
       where: { id: institutionId },
       select: { id: true, institutionType: true, city: true },

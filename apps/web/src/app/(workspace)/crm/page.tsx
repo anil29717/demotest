@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Calendar, MessageSquare, MoreHorizontal, UserPlus, Users } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { apiFetch } from "@/lib/api";
@@ -24,7 +24,7 @@ const STAGES = ["LEAD", "MATCH", "SITE_VISIT", "NEGOTIATION", "LEGAL", "CLOSURE"
 
 export default function CrmPage() {
   const { token } = useAuth();
-  const [leads, setLeads] = useState<Lead[]>([]);
+  const queryClient = useQueryClient();
   const [selected, setSelected] = useState<Lead | null>(null);
   const [newLead, setNewLead] = useState({ leadName: "", source: "manual", stage: "LEAD" });
   const [showAdd, setShowAdd] = useState(false);
@@ -32,16 +32,14 @@ export default function CrmPage() {
   const [followupAt, setFollowupAt] = useState("");
   const [followupNote, setFollowupNote] = useState("");
 
-  const { isLoading } = useQuery({
+  const { data: leads = [], isLoading } = useQuery({
     queryKey: ["leads", token],
     enabled: Boolean(token),
-    queryFn: async () => {
-      const data = await apiFetch<Lead[]>("/leads?limit=20&offset=0", { token: token ?? undefined }).catch(
+    queryFn: () =>
+      apiFetch<Lead[]>("/leads?limit=50", { token: token ?? undefined }).catch(
         () => [],
-      );
-      setLeads(data);
-      return true;
-    },
+      ),
+    staleTime: 1000 * 60 * 1,
   });
 
   async function createLead(e: React.FormEvent) {
@@ -57,8 +55,7 @@ export default function CrmPage() {
       }),
     });
     setNewLead({ leadName: "", source: "manual", stage: "LEAD" });
-    const refreshed = await apiFetch<Lead[]>("/leads?limit=20&offset=0", { token });
-    setLeads(refreshed);
+    await queryClient.invalidateQueries({ queryKey: ["leads"] });
   }
 
   async function moveLead(id: string, stage: string) {
@@ -68,8 +65,7 @@ export default function CrmPage() {
       token,
       body: JSON.stringify({ pipelineStage: stage }),
     });
-    const refreshed = await apiFetch<Lead[]>("/leads?limit=20&offset=0", { token });
-    setLeads(refreshed);
+    await queryClient.invalidateQueries({ queryKey: ["leads"] });
   }
 
   async function addNote(e: React.FormEvent) {
@@ -81,8 +77,8 @@ export default function CrmPage() {
       body: JSON.stringify({ body: note }),
     });
     setNote("");
-    const refreshed = await apiFetch<Lead[]>("/leads?limit=20&offset=0", { token });
-    setLeads(refreshed);
+    await queryClient.invalidateQueries({ queryKey: ["leads"] });
+    const refreshed = await apiFetch<Lead[]>("/leads?limit=50", { token: token ?? undefined }).catch(() => []);
     setSelected(refreshed.find((l) => l.id === selected.id) ?? null);
   }
 
@@ -96,8 +92,8 @@ export default function CrmPage() {
     });
     setFollowupAt("");
     setFollowupNote("");
-    const refreshed = await apiFetch<Lead[]>("/leads?limit=20&offset=0", { token });
-    setLeads(refreshed);
+    await queryClient.invalidateQueries({ queryKey: ["leads"] });
+    const refreshed = await apiFetch<Lead[]>("/leads?limit=50", { token: token ?? undefined }).catch(() => []);
     setSelected(refreshed.find((l) => l.id === selected.id) ?? null);
   }
 

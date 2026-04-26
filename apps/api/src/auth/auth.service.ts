@@ -94,6 +94,28 @@ export class AuthService {
     return phoneHash(phone);
   }
 
+  /** Resolve a platform user from Meta WhatsApp `from` (digits, often with country code). */
+  async findUserIdByWaSender(waFrom: string | null): Promise<string | null> {
+    if (!waFrom) return null;
+    const d = waFrom.replace(/\D/g, '');
+    const candidates = new Set<string>();
+    if (d.length >= 10) candidates.add(d.slice(-10));
+    if (d.length >= 12 && d.startsWith('91')) candidates.add(d.slice(-10));
+    for (const digits of candidates) {
+      try {
+        const hash = phoneHash(digits);
+        const u = await this.prisma.user.findUnique({
+          where: { phoneHash: hash },
+          select: { id: true },
+        });
+        if (u) return u.id;
+      } catch {
+        // normalizePhone may reject pattern
+      }
+    }
+    return null;
+  }
+
   /**
    * Deterministic demo users (9990000001–9990000008) so each role maps to a stable account.
    * Only enabled when DEMO_LOGIN=true (never enable in production).

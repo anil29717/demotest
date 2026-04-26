@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { useState } from "react";
 import { motion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
 import { Briefcase, CheckCircle, Search } from "lucide-react";
@@ -29,17 +28,14 @@ const STAGES = ["LEAD", "MATCH", "SITE_VISIT", "NEGOTIATION", "LEGAL", "LOAN", "
 
 export default function DealsPage() {
   const { token, user } = useAuth();
-  const [deals, setDeals] = useState<Deal[]>([]);
-  const { isLoading: loading } = useQuery({
-    queryKey: ["deals", token],
+  const { data: deals = [], isLoading: loading } = useQuery({
+    queryKey: ["deals", token, user?.role],
     enabled: Boolean(token),
-    queryFn: async () => {
-      const data = await apiFetch<Deal[]>("/deals?limit=20&offset=0", { token: token ?? undefined }).catch(
+    queryFn: () =>
+      apiFetch<Deal[]>("/deals?limit=20", { token: token ?? undefined }).catch(
         () => [],
-      );
-      setDeals(data);
-      return true;
-    },
+      ),
+    staleTime: 1000 * 60 * 1,
   });
 
   if (!token)

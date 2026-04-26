@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { apiFetch } from "@/lib/api";
+import toast from "react-hot-toast";
 
 type Role =
   | "ADMIN"
@@ -37,6 +38,61 @@ const HNI_ASSET_CLASSES = ["Residential", "Commercial", "Distressed", "Bank Auct
 const INSTITUTION_TYPES = ["K-12 School", "College", "University"];
 const ORG_TYPES = ["PE Fund", "Education Group", "Family Office", "Trust", "Corporate", "Other"];
 const SELLER_INTENTS = ["Sale", "Lease", "JV", "Management Takeover"];
+const OPERATING_CITY_OPTIONS = [
+  "Guangzhou",
+  "Shanghai",
+  "Tokyo",
+  "Delhi",
+  "Jakarta",
+  "Mumbai",
+  "Manila",
+  "Mexico City",
+  "Seoul",
+  "Dhaka",
+  "Bengaluru",
+  "Hyderabad",
+  "Chennai",
+  "Kolkata",
+  "Ahmedabad",
+  "Pune",
+  "Jaipur",
+  "Lucknow",
+  "Surat",
+  "Kanpur",
+  "Nagpur",
+  "Indore",
+  "Bhopal",
+  "Beijing",
+  "Bangkok",
+  "Singapore",
+  "Karachi",
+  "Kuala Lumpur",
+  "Dubai",
+  "London",
+  "Paris",
+  "Berlin",
+  "Madrid",
+  "Rome",
+  "Moscow",
+  "Amsterdam",
+  "Vienna",
+  "Istanbul",
+  "New York City",
+  "Los Angeles",
+  "Chicago",
+  "Sao Paulo",
+  "Toronto",
+  "Buenos Aires",
+  "Rio de Janeiro",
+  "Lagos",
+  "Cairo",
+  "Johannesburg",
+  "Nairobi",
+  "Kinshasa",
+  "Sydney",
+  "Melbourne",
+  "Auckland",
+] as const;
 
 const roleColor: Record<string, string> = {
   BROKER: "text-[#00C49A] border-[#00C49A40]",
@@ -151,21 +207,81 @@ export default function OnboardingPage() {
     if (!name.trim()) return false;
     if (role === "BROKER" && step === 2 && !reraId.trim()) return false;
     if (role === "BROKER" && step === 4 && orgMode === "team" && !orgName.trim()) return false;
+    if (role === "BROKER" && step === totalSteps && cities.length === 0) return false;
     if (role === "NRI" && step === 2 && !nriCountry.trim()) return false;
     if (role === "INSTITUTIONAL_BUYER" && step === 2 && !instOrgName.trim()) return false;
     return true;
+  }
+
+  async function handleContinue() {
+    if (!token) return;
+    setSaving(true);
+    try {
+      const profileData: Record<string, unknown> = {};
+
+      if (step === 1 && name.trim()) {
+        profileData.name = name.trim();
+      }
+
+      if (role === "BROKER" && step === 2 && reraId.trim()) {
+        profileData.reraId = reraId.trim();
+      }
+
+      if (role === "BROKER" && step === 3 && cities.length > 0) {
+        profileData.serviceAreas = cities;
+      }
+
+      if (Object.keys(profileData).length > 0) {
+        await apiFetch("/user/profile", {
+          method: "PUT",
+          token,
+          body: JSON.stringify(profileData),
+        }).catch(() => {
+          console.warn("Step save failed silently");
+        });
+      }
+
+      setStep((prev) => Math.min(totalSteps, prev + 1));
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function completeSetup() {
     if (!token) return;
     setSaving(true);
     try {
+      if (role === "BROKER" && cities.length > 0) {
+        await apiFetch("/user/profile", {
+          method: "PUT",
+          token,
+          body: JSON.stringify({
+            serviceAreas: cities,
+            name: name.trim() || undefined,
+            reraId: reraId.trim() || undefined,
+          }),
+        });
+      }
+
       await apiFetch("/user/onboarding", {
         method: "PUT",
         token,
-        body: JSON.stringify({ onboardingComplete: true }),
+        body: JSON.stringify({ step: "complete" }),
       });
+      toast.success("Profile complete! Welcome to AR Buildwel.");
       router.push(finalRedirect[role] ?? "/dashboard");
+    } catch (err: unknown) {
+      let message = "Failed to complete setup. Please try again.";
+      if (err instanceof Error) {
+        message = err.message;
+      }
+      if (
+        message.toLowerCase().includes("service area") ||
+        message.toLowerCase().includes("servicearea")
+      ) {
+        message = "Please add at least one city where you operate before completing setup.";
+      }
+      toast.error(message);
     } finally {
       setSaving(false);
     }
@@ -330,19 +446,37 @@ export default function OnboardingPage() {
             </h2>
             <div>
               <p>Cities you operate in</p>
-              <input
-                className="mt-1 w-full rounded-lg border border-[#333333] bg-[#0b0b0b] px-3 py-2 text-white"
-                value={cityInput}
-                onChange={(e) => setCityInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
+              <div className="mt-1 flex gap-2">
+                <input
+                  list="operating-city-options"
+                  className="w-full rounded-lg border border-[#333333] bg-[#0b0b0b] px-3 py-2 text-white"
+                  value={cityInput}
+                  onChange={(e) => setCityInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addTag(cityInput, setCities, cities);
+                      setCityInput("");
+                    }
+                  }}
+                  placeholder="Select or type city"
+                />
+                <datalist id="operating-city-options">
+                  {OPERATING_CITY_OPTIONS.map((city) => (
+                    <option key={city} value={city} />
+                  ))}
+                </datalist>
+                <button
+                  type="button"
+                  onClick={() => {
                     addTag(cityInput, setCities, cities);
                     setCityInput("");
-                  }
-                }}
-                placeholder="Type city and press Enter"
-              />
+                  }}
+                  className="rounded-lg border border-[#333333] px-3 py-2 text-xs text-[#a3a3a3] hover:border-[#00C49A] hover:text-[#00C49A]"
+                >
+                  Add city
+                </button>
+              </div>
               <div className="mt-2 flex flex-wrap gap-2">
                 {cities.map((city) => (
                   <button
@@ -434,6 +568,13 @@ export default function OnboardingPage() {
                 )}
               </div>
             )}
+          </div>
+        )}
+        {role === "BROKER" && step === totalSteps && cities.length === 0 && (
+          <div className="mt-3 flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2">
+            <span className="text-xs text-amber-400">
+              ⚠ You must add at least one operating city in Step 3 before completing setup.
+            </span>
           </div>
         )}
 
@@ -796,7 +937,7 @@ export default function OnboardingPage() {
             type="button"
             disabled={!canContinue()}
             className="inline-flex items-center gap-2 rounded-lg bg-[#00C49A] px-4 py-2 text-sm font-semibold text-black disabled:cursor-not-allowed disabled:opacity-50"
-            onClick={() => setStep((prev) => Math.min(totalSteps, prev + 1))}
+            onClick={() => void handleContinue()}
           >
             Continue
             <ChevronRight className="h-4 w-4" />

@@ -1,5 +1,14 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
-import { DealStage } from '@prisma/client';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  Logger,
+  forwardRef,
+} from '@nestjs/common';
+import { DealStage, type Prisma } from '@prisma/client';
+import { FeeService } from '../billing/fee.service';
+import { ChatService } from '../chat/chat.service';
+import { MatchingService } from '../matching/matching.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { TransactionOrchestrationService } from '../orchestration/transaction-orchestration.service';
@@ -8,10 +17,16 @@ import { UpdateDealDto } from './dto/update-deal.dto';
 
 @Injectable()
 export class DealsService {
+  private readonly logger = new Logger(DealsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly orchestration: TransactionOrchestrationService,
+    private readonly feeService: FeeService,
+    private readonly matching: MatchingService,
+    @Inject(forwardRef(() => ChatService))
+    private readonly chat: ChatService,
   ) {}
 
   async create(userId: string, dto: CreateDealDto) {
@@ -111,21 +126,30 @@ export class DealsService {
     });
   }
 
+  private async findDealIfAccessible(
+    dealId: string,
+    userId: string,
+    include: Prisma.DealInclude,
+  ) {
+    const memberships = await this.prisma.organizationMember.findMany({
+      where: { userId },
+      select: { organizationId: true },
+    });
+    const orgIds = memberships.map((m) => m.organizationId);
+    const orClause: Prisma.DealWhereInput[] = [{ requirement: { userId } }];
+    if (orgIds.length) orClause.push({ organizationId: { in: orgIds } });
+    return this.prisma.deal.findFirst({
+      where: { id: dealId, OR: orClause },
+      include,
+    });
+  }
+
   async getOne(dealId: string, userId: string) {
-    const deal = await this.prisma.deal.findUnique({
-      where: { id: dealId },
-      include: {
-        requirement: true,
-        property: true,
-        institution: true,
-      },
+    return this.findDealIfAccessible(dealId, userId, {
+      requirement: { select: { id: true, userId: true, city: true } },
+      property: true,
+      institution: true,
     });
-    if (!deal) return null;
-    const member = await this.prisma.organizationMember.findFirst({
-      where: { organizationId: deal.organizationId, userId },
-    });
-    if (!member) return null;
-    return deal;
   }
 
   async list(organizationId: string) {
@@ -176,7 +200,40 @@ export class DealsService {
       select: { id: true },
     });
     if (!member) throw new BadRequestException('Not a member of organization');
-    return this.orchestration.advanceDeal(dealId, userId);
+    const updated = await this.orchestration.advanceDeal(dealId, userId);
+    try {
+      const broker = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { name: true },
+      });
+      const label = broker?.name?.trim() || 'Broker';
+      await this.chat.createSystemMessageForDeal(
+        dealId,
+        `Deal moved to ${updated.stage} by ${label}`,
+      );
+    } catch {
+      // Non-blocking chat compliance trail
+    }
+    if (updated.stage === DealStage.CLOSURE) {
+      try {
+        await this.feeService.createClosurePlatformFeeInvoice(dealId, userId);
+      } catch (e) {
+        this.logger.warn(
+          `Closure platform fee invoice failed for deal ${dealId}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+      try {
+        await this.matching.onDealReachedClosure({
+          propertyId: updated.propertyId,
+          requirementId: updated.requirementId,
+        });
+      } catch (e) {
+        this.logger.warn(
+          `Match closure feedback failed for deal ${dealId}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+    return updated;
   }
 
   async patch(userId: string, dealId: string, dto: UpdateDealDto) {
@@ -206,12 +263,8 @@ export class DealsService {
   }
 
   async timeline(dealId: string, userId: string) {
-    const deal = await this.prisma.deal.findUnique({ where: { id: dealId } });
-    if (!deal) throw new BadRequestException('Deal not found');
-    const member = await this.prisma.organizationMember.findFirst({
-      where: { organizationId: deal.organizationId, userId },
-    });
-    if (!member) throw new BadRequestException('Not a member of organization');
+    const deal = await this.findDealIfAccessible(dealId, userId, {});
+    if (!deal) throw new BadRequestException('Deal not found or no access');
     const [logs, docs, services] = await Promise.all([
       this.prisma.activityLog.findMany({
         where: { entityType: 'deal', entityId: dealId },

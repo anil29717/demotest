@@ -1029,6 +1029,245 @@ async function seedSupportingModules() {
       },
     });
   });
+
+  const extraLeads = [
+    {
+      id: 'demo_lead_4',
+      organizationId: 'demo_org_alpha',
+      ownerId: 'demo_user_broker_1',
+      leadName: 'Priya Sharma',
+      source: 'whatsapp',
+      status: LeadStatus.WARM,
+      pipelineStage: 'site_visit',
+      propertyId: 'demo_prop_mumbai_office',
+      requirementId: 'demo_req_buyer_mumbai',
+    },
+    {
+      id: 'demo_lead_5',
+      organizationId: 'demo_org_alpha',
+      ownerId: 'demo_user_broker_1',
+      leadName: 'Rahul Mehta',
+      source: 'portal',
+      status: LeadStatus.HOT,
+      pipelineStage: 'negotiation',
+      propertyId: 'demo_prop_delhi_commercial',
+      requirementId: 'demo_req_hni_delhi',
+    },
+    {
+      id: 'demo_lead_6',
+      organizationId: 'demo_org_alpha',
+      ownerId: 'demo_user_broker_1',
+      leadName: 'Anita Patel',
+      source: 'manual',
+      status: LeadStatus.WARM,
+      pipelineStage: 'legal',
+      propertyId: 'demo_prop_pune_plot',
+      requirementId: 'demo_req_buyer_mumbai',
+    },
+    {
+      id: 'demo_lead_7',
+      organizationId: 'demo_org_alpha',
+      ownerId: 'demo_user_broker_1',
+      leadName: 'Vikram Singh',
+      source: 'referral',
+      status: LeadStatus.WARM,
+      pipelineStage: 'match',
+      propertyId: 'demo_prop_hyd_resi_rent',
+      requirementId: 'demo_req_nri_hyd',
+    },
+    {
+      id: 'demo_lead_8',
+      organizationId: 'demo_org_alpha',
+      ownerId: 'demo_user_broker_1',
+      leadName: 'Deepa Nair',
+      source: 'whatsapp',
+      status: LeadStatus.CONVERTED,
+      pipelineStage: 'closure',
+      propertyId: 'demo_prop_delhi_commercial',
+      requirementId: 'demo_req_hni_delhi',
+    },
+  ];
+
+  for (const lead of extraLeads) {
+    await prisma.lead.upsert({
+      where: { id: lead.id },
+      update: lead,
+      create: lead,
+    });
+  }
+
+  const extraDeals = [
+    {
+      id: 'demo_deal_4',
+      organizationId: 'demo_org_alpha',
+      propertyId: 'demo_prop_mumbai_office',
+      requirementId: 'demo_req_buyer_mumbai',
+      stage: DealStage.NEGOTIATION,
+      valueInr: '25000000',
+      dealHealthScore: 78,
+      slaBreachCount: 0,
+    },
+    {
+      id: 'demo_deal_5',
+      organizationId: 'demo_org_alpha',
+      propertyId: 'demo_prop_pune_plot',
+      requirementId: 'demo_req_buyer_mumbai',
+      stage: DealStage.LEGAL,
+      valueInr: '18500000',
+      dealHealthScore: 85,
+      slaBreachCount: 0,
+    },
+  ];
+
+  for (const deal of extraDeals) {
+    await prisma.deal.upsert({
+      where: { id: deal.id },
+      update: deal,
+      create: deal,
+    });
+  }
+
+  const extraNotifications = [
+    {
+      id: 'demo_notif_4',
+      userId: 'demo_user_broker_1',
+      channel: 'in_app',
+      title: 'New hot match found',
+      body: 'Your Bandra listing matched a buyer requirement — 91% score',
+      read: false,
+    },
+    {
+      id: 'demo_notif_5',
+      userId: 'demo_user_broker_1',
+      channel: 'in_app',
+      title: 'Deal stage advanced',
+      body: 'Deal for Powai property moved to Negotiation stage',
+      read: false,
+    },
+    {
+      id: 'demo_notif_6',
+      userId: 'demo_user_broker_1',
+      channel: 'in_app',
+      title: 'Compliance alert',
+      body: 'NDA required before accessing institutional data room',
+      read: false,
+    },
+    {
+      id: 'demo_notif_7',
+      userId: 'demo_user_broker_1',
+      channel: 'in_app',
+      title: 'Requirement matched 3 listings',
+      body: 'A new requirement in Mumbai matched 3 of your properties',
+      read: true,
+    },
+    {
+      id: 'demo_notif_8',
+      userId: 'demo_user_broker_1',
+      channel: 'in_app',
+      title: 'SLA warning',
+      body: 'Deal at Site Visit stage is overdue by 2 days',
+      read: false,
+    },
+  ];
+
+  for (const notification of extraNotifications) {
+    await prisma.notification.upsert({
+      where: { id: notification.id },
+      update: notification,
+      create: notification,
+    });
+  }
+
+  await optionalSeedStep('AuctionListing-extra', async () => {
+    const extraAuctions = [
+      {
+        id: 'demo_auction_2',
+        title: 'SARFAESI Commercial Plot — Andheri East',
+        city: 'Mumbai',
+        source: 'sarfaesi',
+        startPrice: '12500000',
+        emdAmount: '1250000',
+        auctionDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        metadata: { possessionStatus: 'VACANT', legalStatus: 'CLEAR', investmentScore: 78, liquidityScore: 'HIGH' },
+      },
+      {
+        id: 'demo_auction_3',
+        title: 'Bank Auction — 4BHK Residential Pune',
+        city: 'Pune',
+        source: 'bank_portal',
+        startPrice: '8500000',
+        emdAmount: '850000',
+        auctionDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+        metadata: { possessionStatus: 'TENANT_OCCUPIED', legalStatus: 'PENDING', investmentScore: 62, liquidityScore: 'MEDIUM' },
+      },
+      {
+        id: 'demo_auction_4',
+        title: 'NPA Industrial Warehouse — Bhiwandi',
+        city: 'Mumbai',
+        source: 'nbfc',
+        startPrice: '32000000',
+        emdAmount: '3200000',
+        auctionDate: new Date(Date.now() + 21 * 24 * 60 * 60 * 1000),
+        metadata: { possessionStatus: 'VACANT', legalStatus: 'CLEAR', investmentScore: 84, liquidityScore: 'HIGH' },
+      },
+    ];
+
+    for (const auction of extraAuctions) {
+      await prisma.auctionListing.upsert({
+        where: { id: auction.id },
+        update: auction,
+        create: auction,
+      });
+    }
+  });
+
+  await optionalSeedStep('FraudCase-extra', async () => {
+    await prisma.fraudCase.upsert({
+      where: { id: 'demo_fraud_3' },
+      update: {
+        subjectUserId: 'demo_user_broker_1',
+        propertyId: 'demo_prop_mumbai_office',
+        dealId: null,
+        status: 'open',
+        score: 88,
+        reason: 'User posted 8 listings in 2 hours — velocity threshold exceeded',
+        resolvedById: null,
+      },
+      create: {
+        id: 'demo_fraud_3',
+        subjectUserId: 'demo_user_broker_1',
+        propertyId: 'demo_prop_mumbai_office',
+        dealId: null,
+        status: 'open',
+        score: 88,
+        reason: 'User posted 8 listings in 2 hours — velocity threshold exceeded',
+        resolvedById: null,
+      },
+    });
+  });
+
+  const extraInstitution = {
+    id: 'demo_inst_3',
+    postedById: 'demo_user_broker_1',
+    institutionName: 'Hyderabad College Asset',
+    institutionType: 'college',
+    city: 'Hyderabad',
+    maskedSummary: 'Accredited private college campus.',
+    askingPriceCr: '85.0000',
+    studentEnrollment: 3200,
+    latitude: 17.385,
+    longitude: 78.4867,
+    ndaRequired: true,
+    confidential: true,
+    verificationStatus: 'verified',
+    dealScore: 81,
+  };
+
+  await prisma.institution.upsert({
+    where: { id: extraInstitution.id },
+    update: extraInstitution,
+    create: extraInstitution,
+  });
 }
 
 async function main() {

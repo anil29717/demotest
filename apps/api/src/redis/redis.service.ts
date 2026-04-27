@@ -9,8 +9,14 @@ export class RedisService implements OnModuleDestroy {
   constructor(private readonly config: ConfigService) {
     const url = this.config.get<string>('REDIS_URL', 'redis://127.0.0.1:6379');
     this.client = new Redis(url, {
-      maxRetriesPerRequest: 3,
+      // Avoid MaxRetriesPerRequestError when Redis is stopped; fail fast on commands instead.
+      maxRetriesPerRequest: null,
       lazyConnect: true,
+      enableOfflineQueue: false,
+      retryStrategy(times: number) {
+        if (times > 15) return null;
+        return Math.min(times * 100, 2000);
+      },
     });
   }
 
@@ -35,6 +41,6 @@ export class RedisService implements OnModuleDestroy {
   }
 
   async onModuleDestroy() {
-    await this.client.quit();
+    await this.client.quit().catch(() => undefined);
   }
 }

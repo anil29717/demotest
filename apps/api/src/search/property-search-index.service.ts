@@ -188,6 +188,7 @@ export class PropertySearchIndexService implements OnModuleInit {
           distressedLabel: { type: 'keyword' },
           organizationId: { type: 'keyword' },
           userId: { type: 'keyword' },
+          // Geo search/scoring requires geo_point; requires reindex if mapping changed.
           location: { type: 'geo_point' },
           createdAt: { type: 'date' },
           imageUrls: { type: 'keyword' },

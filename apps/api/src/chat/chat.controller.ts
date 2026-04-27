@@ -44,6 +44,24 @@ export class ChatController {
     return this.chat.getUserThreads(user.sub);
   }
 
+  @Get('presence/:userId')
+  async presence(
+    @CurrentUser() user: JwtPayloadUser,
+    @Param('userId') targetUserId: string,
+  ) {
+    void user;
+    const online = await this.chat.isUserOnline(targetUserId);
+    return { userId: targetUserId, online };
+  }
+
+  @Get('threads/:threadId/summary')
+  async threadSummary(
+    @CurrentUser() user: JwtPayloadUser,
+    @Param('threadId') threadId: string,
+  ) {
+    return this.chat.getThreadSummary(threadId, user.sub);
+  }
+
   @Get('threads/:threadId/messages')
   async listMessages(
     @CurrentUser() user: JwtPayloadUser,

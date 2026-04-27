@@ -14,6 +14,7 @@ import { AuditService } from '../audit/audit.service';
 import { TransactionOrchestrationService } from '../orchestration/transaction-orchestration.service';
 import { CreateDealDto } from './dto/create-deal.dto';
 import { UpdateDealDto } from './dto/update-deal.dto';
+import { DealScoreService } from './deal-score.service';
 
 @Injectable()
 export class DealsService {
@@ -27,6 +28,7 @@ export class DealsService {
     private readonly matching: MatchingService,
     @Inject(forwardRef(() => ChatService))
     private readonly chat: ChatService,
+    private readonly dealScore: DealScoreService,
   ) {}
 
   async create(userId: string, dto: CreateDealDto) {
@@ -99,7 +101,7 @@ export class DealsService {
     });
     const orgIds = memberships.map((m) => m.organizationId);
     if (!orgIds.length) return [];
-    return this.prisma.deal.findMany({
+    const deals = await this.prisma.deal.findMany({
       where: { organizationId: { in: orgIds } },
       orderBy: { updatedAt: 'desc' },
       include: {
@@ -124,6 +126,13 @@ export class DealsService {
         },
       },
     });
+    const withScore = await Promise.all(
+      deals.map(async (d) => ({
+        ...d,
+        closureProbability: await this.dealScore.calculateClosureProbability(d),
+      })),
+    );
+    return withScore;
   }
 
   private async findDealIfAccessible(
@@ -145,15 +154,20 @@ export class DealsService {
   }
 
   async getOne(dealId: string, userId: string) {
-    return this.findDealIfAccessible(dealId, userId, {
+    const deal = await this.findDealIfAccessible(dealId, userId, {
       requirement: { select: { id: true, userId: true, city: true } },
       property: true,
       institution: true,
     });
+    if (!deal) return null;
+    return {
+      ...deal,
+      closureProbability: await this.dealScore.calculateClosureProbability(deal),
+    };
   }
 
   async list(organizationId: string) {
-    return this.prisma.deal.findMany({
+    const deals = await this.prisma.deal.findMany({
       where: { organizationId },
       orderBy: { updatedAt: 'desc' },
       include: {
@@ -178,6 +192,13 @@ export class DealsService {
         },
       },
     });
+    const withScore = await Promise.all(
+      deals.map(async (d) => ({
+        ...d,
+        closureProbability: await this.dealScore.calculateClosureProbability(d),
+      })),
+    );
+    return withScore;
   }
 
   async listForOrganizationUser(userId: string, organizationId: string) {
@@ -233,7 +254,11 @@ export class DealsService {
         );
       }
     }
-    return updated;
+    const score = await this.dealScore.calculateClosureProbability(updated);
+    this.logger.log(
+      `Deal ${dealId} closure probability ${score.probability}% (${score.label})`,
+    );
+    return { ...updated, closureProbability: score };
   }
 
   async patch(userId: string, dealId: string, dto: UpdateDealDto) {

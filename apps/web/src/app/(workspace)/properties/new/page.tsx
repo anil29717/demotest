@@ -2,15 +2,16 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, FileText, Image as ImageIcon, MapPin, Send, ShieldAlert } from "lucide-react";
+import { Check, ChevronLeft, FileText, Image as ImageIcon, MapPin, Send, ShieldAlert } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { apiFetch } from "@/lib/api";
 import { formatINR } from "@/lib/format";
 
 const PT = ["RESIDENTIAL", "COMMERCIAL", "PLOT", "INSTITUTIONAL"] as const;
 const DT = ["SALE", "RENT"] as const;
+type OrgRow = { id: string; name?: string; organizationId?: string; isActive?: boolean };
 
 export default function NewPropertyPage() {
   const { token, user } = useAuth();
@@ -18,6 +19,7 @@ export default function NewPropertyPage() {
   const queryClient = useQueryClient();
   const [err, setErr] = useState<string | null>(null);
   const [uploadMsg, setUploadMsg] = useState<string | null>(null);
+  const [orgs, setOrgs] = useState<OrgRow[]>([]);
   const [form, setForm] = useState({
     title: "",
     description: "",
@@ -67,9 +69,6 @@ export default function NewPropertyPage() {
           organizationId: form.organizationId || undefined,
           imageUrls: imageUrls.length ? imageUrls : undefined,
           isHighOpportunity: form.isHighOpportunity,
-          reasonForSelling: form.reasonForSelling || undefined,
-          timeline: form.timeline || undefined,
-          negotiable: form.negotiable,
         }),
       });
       await queryClient.invalidateQueries({ queryKey: ["properties"] });
@@ -87,16 +86,34 @@ export default function NewPropertyPage() {
     if (!token || !files?.length) return;
     setUploadMsg(null);
     const urls: string[] = [];
+    let failed = 0;
     for (const file of Array.from(files)) {
       try {
-        const res = await apiFetch<{ publicUrl: string }>("/properties/upload-url", {
+        const res = await apiFetch<{
+          uploadUrl: string;
+          publicUrl: string;
+          method?: string;
+          headers?: Record<string, string>;
+        }>("/properties/upload-url", {
           method: "POST",
           token,
           body: JSON.stringify({ fileName: file.name, contentType: file.type }),
         });
+        const uploadRes = await fetch(res.uploadUrl, {
+          method: res.method ?? "PUT",
+          headers: {
+            "content-type": file.type || "application/octet-stream",
+            ...(res.headers ?? {}),
+          },
+          body: file,
+        });
+        if (!uploadRes.ok) {
+          failed += 1;
+          continue;
+        }
         urls.push(res.publicUrl);
       } catch {
-        setUploadMsg("Some files failed to generate upload URLs.");
+        failed += 1;
       }
     }
     if (urls.length) {
@@ -104,9 +121,36 @@ export default function NewPropertyPage() {
         ...f,
         imageUrlsText: [f.imageUrlsText, ...urls].filter(Boolean).join("\n"),
       }));
-      setUploadMsg(`Generated ${urls.length} media URL(s).`);
+      setUploadMsg(
+        failed
+          ? `Uploaded ${urls.length} file(s). ${failed} failed.`
+          : `Uploaded ${urls.length} file(s).`,
+      );
+      return;
     }
+    setUploadMsg("Upload failed. Listing will show placeholder image until a valid image URL is saved.");
   }
+
+  useEffect(() => {
+    if (!token || user?.role === "SELLER") return;
+    let cancelled = false;
+    void apiFetch<OrgRow[]>("/organizations/mine", { token })
+      .then((rows) => {
+        if (cancelled) return;
+        setOrgs(rows);
+        const active = rows.find((row) => row.isActive) ?? rows[0];
+        if (active && !form.organizationId) {
+          const resolved = active.organizationId || active.id;
+          setForm((f) => ({ ...f, organizationId: resolved }));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setOrgs([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, user?.role, form.organizationId]);
 
   if (!token)
     return (
@@ -211,36 +255,39 @@ export default function NewPropertyPage() {
           <p className="text-xs text-zinc-500">Live: {formatINR(Number(form.price || 0))}</p>
         </section>
         <section className="rounded-xl border border-[#1f1f1f] bg-[#111111] p-4">
-          <p className="mb-3 inline-flex items-center gap-2 font-medium text-white"><MapPin className="h-4 w-4 text-[#00C49A]" /> Location</p>
-        <label>
-          City
+          <p className="mb-3 inline-flex items-center gap-2 font-medium text-white">
+            <MapPin className="h-4 w-4 text-[#00C49A]" /> <span>Location</span>
+          </p>
+          <div className="space-y-3">
+        <label className="block">
+          <span className="mb-1 block">City</span>
           <input
             required
-            className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2"
+            className="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2"
             value={form.city}
             onChange={(e) => setForm((f) => ({ ...f, city: e.target.value }))}
           />
         </label>
-        <label>
-          Area (public)
+        <label className="block">
+          <span className="mb-1 block">Area (public)</span>
           <input
             required
-            className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2"
+            className="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2"
             value={form.areaPublic}
             onChange={(e) => setForm((f) => ({ ...f, areaPublic: e.target.value }))}
           />
         </label>
-        <label>
-          Locality (public)
+        <label className="block">
+          <span className="mb-1 block">Locality (public)</span>
           <input
             required
-            className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2"
+            className="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2"
             value={form.localityPublic}
             onChange={(e) => setForm((f) => ({ ...f, localityPublic: e.target.value }))}
           />
         </label>
-        <label>
-          Lat / Long
+        <label className="block">
+          <span className="mb-1 block">Lat / Long</span>
           <div className="mt-1 flex gap-2">
             <input
               className="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2"
@@ -255,32 +302,48 @@ export default function NewPropertyPage() {
           </div>
         </label>
         {user?.role !== "SELLER" ? (
-          <label>
-            Organization ID (optional — broker team)
-            <input
-              className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2"
+          <label className="block">
+            <span className="mb-1 block">Organization ID (optional — broker team)</span>
+            <select
+              className="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2"
               value={form.organizationId}
               onChange={(e) => setForm((f) => ({ ...f, organizationId: e.target.value }))}
-              placeholder="From “Create broker organization”"
-            />
+            >
+              <option value="">Independent (no organization)</option>
+              {orgs.map((org) => {
+                const oid = org.organizationId || org.id;
+                return (
+                  <option key={oid} value={oid}>
+                    {(org.name || "Organization")} ({oid})
+                  </option>
+                );
+              })}
+            </select>
           </label>
         ) : null}
-        <label className="flex items-center gap-2">
+        <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2 hover:border-zinc-600">
           <input
             type="checkbox"
+            className="peer sr-only"
             checked={form.isHighOpportunity}
             onChange={(e) => setForm((f) => ({ ...f, isHighOpportunity: e.target.checked }))}
           />
+          <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded border border-zinc-600 bg-zinc-900 peer-checked:border-[#00C49A] peer-checked:bg-[#00C49A]">
+            <Check className="h-3.5 w-3.5 text-black opacity-0 peer-checked:opacity-100" />
+          </span>
           <span>High-Opportunity Investment Deal (distressed / special situation)</span>
         </label>
-          <label className="mt-2 block">
-            Bank auction property
+          <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2 hover:border-zinc-600">
             <input
               type="checkbox"
-              className="ml-2"
+              className="peer sr-only"
               checked={form.dealType === "SALE" && form.isHighOpportunity}
               onChange={(e) => setForm((f) => ({ ...f, isHighOpportunity: e.target.checked }))}
             />
+            <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded border border-zinc-600 bg-zinc-900 peer-checked:border-[#00C49A] peer-checked:bg-[#00C49A]">
+              <Check className="h-3.5 w-3.5 text-black opacity-0 peer-checked:opacity-100" />
+            </span>
+            <span>Bank auction property</span>
           </label>
           {user?.role === "SELLER" ? (
             <details className="mt-3 rounded-lg border border-[#1f1f1f] p-3">
@@ -314,30 +377,35 @@ export default function NewPropertyPage() {
               </div>
             </details>
           ) : null}
+          </div>
         </section>
         <section className="rounded-xl border border-[#1f1f1f] bg-[#111111] p-4">
-          <p className="mb-3 inline-flex items-center gap-2 font-medium text-white"><ImageIcon className="h-4 w-4 text-[#00C49A]" /> Images</p>
-        <label>
-          Upload images
+          <p className="mb-3 inline-flex items-center gap-2 font-medium text-white">
+            <ImageIcon className="h-4 w-4 text-[#00C49A]" /> <span>Images</span>
+          </p>
+          <div className="space-y-3">
+        <label className="block">
+          <span className="mb-1 block">Upload images</span>
           <input
             type="file"
             multiple
             accept="image/*"
-            className="mt-1 block w-full text-xs text-zinc-400 file:mr-2 file:rounded file:border-0 file:bg-zinc-800 file:px-3 file:py-1 file:text-zinc-200"
+            className="block w-full text-xs text-zinc-400 file:mr-2 file:rounded file:border-0 file:bg-zinc-800 file:px-3 file:py-1 file:text-zinc-200"
             onChange={(e) => void mockUpload(e.target.files)}
           />
         </label>
         {uploadMsg && <p className="text-xs text-zinc-500">{uploadMsg}</p>}
-        <label>
-          Image URLs (https, one per line)
+        <label className="block">
+          <span className="mb-1 block">Image URLs (https, one per line)</span>
           <textarea
-            className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-xs"
+            className="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-xs"
             rows={4}
             value={form.imageUrlsText}
             onChange={(e) => setForm((f) => ({ ...f, imageUrlsText: e.target.value }))}
             placeholder="https://images.unsplash.com/..."
           />
         </label>
+          </div>
         </section>
         {err && <p className="text-sm text-red-400">{err}</p>}
         <button

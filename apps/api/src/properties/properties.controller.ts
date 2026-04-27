@@ -5,6 +5,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
@@ -41,6 +42,11 @@ export class PropertiesController {
   @Get()
   list() {
     return this.properties.listPublic();
+  }
+
+  @Get('check-hash')
+  checkHash(@Query('hash') hash?: string) {
+    return this.properties.checkHash(hash);
   }
 
   @Get('mine')

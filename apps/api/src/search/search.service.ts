@@ -27,6 +27,9 @@ export type PropertySearchFilters = {
   maxAreaSqft?: number;
   isBankAuction?: boolean;
   distressedLabel?: string;
+  lat?: number;
+  lon?: number;
+  radiusKm?: number;
 };
 
 export type SearchHitRow = {
@@ -104,6 +107,9 @@ function queryDtoToFilters(
     maxAreaSqft: dto.maxAreaSqft,
     isBankAuction: dto.isBankAuction,
     distressedLabel: dto.distressedLabel?.trim() || undefined,
+    lat: dto.lat,
+    lon: dto.lon,
+    radiusKm: dto.radiusKm,
   };
 }
 
@@ -116,6 +122,9 @@ function hasStructuredFilter(f: PropertySearchFilters): boolean {
     f.maxPrice != null ||
     f.minAreaSqft != null ||
     f.maxAreaSqft != null ||
+    f.lat != null ||
+    f.lon != null ||
+    f.radiusKm != null ||
     f.isBankAuction === true ||
     f.isBankAuction === false ||
     (f.distressedLabel && f.distressedLabel.length > 0)
@@ -370,7 +379,11 @@ export class SearchService {
   private buildElasticsearchQuery(
     filters: PropertySearchFilters,
     sort: SearchSortMode,
-  ): { query: Record<string, unknown>; sort: Record<string, unknown>[] } {
+  ): {
+    query: Record<string, unknown>;
+    sort: Record<string, unknown>[];
+    aggs: Record<string, unknown>;
+  } {
     const filter: Record<string, unknown>[] = [{ term: { status: 'active' } }];
     if (filters.city?.trim()) {
       filter.push({ term: { 'city.keyword': filters.city.trim() } });
@@ -430,31 +443,85 @@ export class SearchService {
       innerBool.must = [{ match_all: {} }];
     }
 
+    const functions: Record<string, unknown>[] = [
+      {
+        field_value_factor: {
+          field: 'matchCount',
+          factor: 0.08,
+          modifier: 'log1p',
+          missing: 0,
+        },
+      },
+      {
+        gauss: {
+          createdAt: {
+            origin: 'now',
+            scale: '120d',
+            decay: 0.65,
+          },
+        },
+        weight: 0.35,
+      },
+    ];
+
+    const hasGeo =
+      typeof filters.lat === 'number' &&
+      Number.isFinite(filters.lat) &&
+      typeof filters.lon === 'number' &&
+      Number.isFinite(filters.lon);
+    if (hasGeo) {
+      // Geo: boost nearby, strict filter if radiusKm set
+      // Requires location: geo_point in index mapping
+      // Run reindex if mapping was changed
+      functions.push({
+        gauss: {
+          location: {
+            origin: { lat: filters.lat, lon: filters.lon },
+            scale: '20km',
+            offset: '5km',
+            decay: 0.5,
+          },
+        },
+        weight: 2,
+      });
+      if (filters.radiusKm != null) {
+        filter.push({
+          geo_distance: {
+            distance: `${filters.radiusKm}km`,
+            location: { lat: filters.lat, lon: filters.lon },
+          },
+        });
+      }
+    }
+
     const query: Record<string, unknown> = {
       function_score: {
         query: { bool: innerBool },
         boost_mode: 'multiply',
         score_mode: 'multiply',
-        functions: [
-          {
-            field_value_factor: {
-              field: 'matchCount',
-              factor: 0.08,
-              modifier: 'log1p',
-              missing: 0,
-            },
-          },
-          {
-            gauss: {
-              createdAt: {
-                origin: 'now',
-                scale: '120d',
-                decay: 0.65,
-              },
-            },
-            weight: 0.35,
-          },
-        ],
+        functions,
+      },
+    };
+
+    const aggs: Record<string, unknown> = {
+      by_type: {
+        terms: { field: 'propertyType', size: 10 },
+      },
+      by_deal_type: {
+        terms: { field: 'dealType', size: 5 },
+      },
+      by_city: {
+        terms: { field: 'city.keyword', size: 20 },
+      },
+      price_stats: {
+        stats: { field: 'price' },
+      },
+      price_histogram: {
+        histogram: {
+          field: 'price',
+          interval: 5000000,
+          min_doc_count: 1,
+        },
       },
     };
 
@@ -469,7 +536,7 @@ export class SearchService {
       sortArr = [{ _score: 'desc' }, { createdAt: 'desc' }];
     }
 
-    return { query, sort: sortArr };
+    return { query, sort: sortArr, aggs };
   }
 
   private async executePropertySearch(
@@ -489,8 +556,16 @@ export class SearchService {
         hits: [] as SearchHitRow[],
         total: 0,
         tookMs: 0,
+        took: 0,
         note: 'Enter a search query or choose at least one filter.',
         fallback: false,
+        facets: {
+          types: [],
+          dealTypes: [],
+          cities: [],
+          priceRange: { min: 0, max: 0, avg: 0 },
+          priceHistogram: [],
+        },
       };
     }
 
@@ -502,7 +577,7 @@ export class SearchService {
         try {
           await this.propertySearchIndex.ensureIndex();
           const index = this.propertySearchIndex.getIndexName();
-          const { query, sort } = this.buildElasticsearchQuery(
+          const { query, sort, aggs } = this.buildElasticsearchQuery(
             filters,
             opts.sort,
           );
@@ -510,6 +585,7 @@ export class SearchService {
             index,
             query: query as never,
             sort: sort as never,
+            aggs: aggs as never,
             from,
             size: opts.limit,
             track_total_hits: true,
@@ -555,12 +631,47 @@ export class SearchService {
               _score: typeof h._score === 'number' ? h._score : undefined,
             };
           });
+          const aggregations = (res.aggregations ?? {}) as Record<string, unknown>;
+          const byType =
+            ((aggregations.by_type as { buckets?: Array<{ key: string; doc_count: number }> } | undefined)
+              ?.buckets ?? []);
+          const byDealType =
+            ((aggregations.by_deal_type as { buckets?: Array<{ key: string; doc_count: number }> } | undefined)
+              ?.buckets ?? []);
+          const byCity =
+            ((aggregations.by_city as { buckets?: Array<{ key: string; doc_count: number }> } | undefined)
+              ?.buckets ?? []);
+          const priceStats =
+            (aggregations.price_stats as {
+              min?: number | null;
+              max?: number | null;
+              avg?: number | null;
+            } | undefined) ?? {};
+          const priceHistogram =
+            ((aggregations.price_histogram as {
+              buckets?: Array<{ key: number; doc_count: number }>;
+            } | undefined)?.buckets ?? []);
           return {
             hits,
             total,
             tookMs,
+            took: tookMs,
             note: `Elasticsearch index ${index}.`,
             fallback: false,
+            facets: {
+              types: byType.map((b) => ({ key: b.key, count: b.doc_count })),
+              dealTypes: byDealType.map((b) => ({
+                key: b.key,
+                count: b.doc_count,
+              })),
+              cities: byCity.map((b) => ({ key: b.key, count: b.doc_count })),
+              priceRange: {
+                min: Number(priceStats.min ?? 0),
+                max: Number(priceStats.max ?? 0),
+                avg: Number(priceStats.avg ?? 0),
+              },
+              priceHistogram,
+            },
           };
         } catch (err) {
           this.logger.warn(
@@ -603,7 +714,15 @@ export class SearchService {
     const note = esConfigured
       ? 'PostgreSQL fallback (Elasticsearch error or unreachable).'
       : 'PostgreSQL text + filters. Set ELASTICSEARCH_URL for ES-backed search.';
-    return { hits, total, tookMs, note, fallback: true };
+    return {
+      hits,
+      total,
+      tookMs,
+      took: null as number | null,
+      note,
+      fallback: true,
+      facets: null,
+    };
   }
 
   async adminReindexElasticsearch(): Promise<{ indexed: number }> {

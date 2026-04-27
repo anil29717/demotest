@@ -1,4 +1,4 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -40,6 +40,79 @@ export class DashboardController {
       return { ...r, role: user.role };
     }
     return this.sellerSummary(user.sub);
+  }
+
+  @Get('sidebar-counts')
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.BROKER,
+    UserRole.BUYER,
+    UserRole.SELLER,
+    UserRole.NRI,
+    UserRole.HNI,
+    UserRole.BUILDER,
+    UserRole.INSTITUTIONAL_BUYER,
+    UserRole.INSTITUTIONAL_SELLER,
+  )
+  async sidebarCounts(
+    @CurrentUser() user: JwtPayloadUser,
+    @Query('includeNonCritical') includeNonCritical?: string,
+  ) {
+    const includeLazy = String(includeNonCritical ?? '').toLowerCase() === 'true';
+    const [myProperties, myRequirements, myMatches, myDeals] = await Promise.all([
+      this.prisma.property.count({
+        where: {
+          postedById: user.sub,
+          status: 'active',
+        },
+      }),
+      this.prisma.requirement.count({
+        where: { userId: user.sub },
+      }),
+      this.prisma.match.count({
+        where: {
+          OR: [{ property: { postedById: user.sub } }, { requirement: { userId: user.sub } }],
+        },
+      }),
+      this.prisma.deal.count({
+        where: {
+          OR: [{ property: { postedById: user.sub } }, { requirement: { userId: user.sub } }],
+        },
+      }),
+    ]);
+
+    if (!includeLazy) {
+      return {
+        properties: myProperties,
+        requirements: myRequirements,
+        matches: myMatches,
+        deals: myDeals,
+        hotLeads: 0,
+        compliance: 0,
+        auctions: 0,
+        institutions: 0,
+        chatUnread: 0,
+      };
+    }
+
+    const [leads] = await Promise.all([
+      this.prisma.lead.findMany({
+        where: { ownerId: user.sub },
+        select: { status: true },
+      }),
+    ]);
+
+    return {
+      properties: myProperties,
+      requirements: myRequirements,
+      matches: myMatches,
+      deals: myDeals,
+      hotLeads: leads.filter((row) => String(row.status ?? '').toUpperCase() === 'HOT').length,
+      compliance: 0,
+      auctions: 0,
+      institutions: 0,
+      chatUnread: 0,
+    };
   }
 
   private async adminSummary(userId: string) {

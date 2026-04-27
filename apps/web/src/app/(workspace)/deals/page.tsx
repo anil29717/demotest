@@ -22,11 +22,31 @@ type Deal = {
   updatedAt: string;
   property: { id: string; title: string; city: string; imageUrls?: string[] } | null;
   institution: { id: string; city: string } | null;
+  closureProbability?: { probability: number; label: "High" | "Medium" | "At risk" };
 };
 
 const STAGES = ["LEAD", "MATCH", "SITE_VISIT", "NEGOTIATION", "LEGAL", "LOAN", "INSURANCE", "PAYMENT", "CLOSURE"] as const;
 
 export default function DealsPage() {
+  function probabilityBadge(cp?: { probability: number; label: string }) {
+    if (!cp) return null;
+    const tone =
+      cp.probability >= 70
+        ? "border-emerald-800 text-emerald-300"
+        : cp.probability >= 40
+          ? "border-amber-800 text-amber-300"
+          : "border-red-800 text-red-300";
+    const text = cp.probability >= 70 ? "High chance" : cp.probability >= 40 ? "Medium" : "At risk";
+    return (
+      <span
+        className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] ${tone}`}
+        title="Based on stage, time, broker history, property quality, recent activity"
+      >
+        {text} · {cp.probability}%
+      </span>
+    );
+  }
+
   const { token, user } = useAuth();
   const { data: deals = [], isLoading: loading } = useQuery({
     queryKey: ["deals", token, user?.role],
@@ -86,6 +106,7 @@ export default function DealsPage() {
                     <Badge tone="blue" className="mt-2">
                       {d.stage}
                     </Badge>
+                    <div className="mt-2">{probabilityBadge(d.closureProbability)}</div>
                     <div className="mt-3 flex flex-wrap gap-1">
                       {Array.from({ length: 10 }).map((_, i) => (
                         <span
@@ -173,6 +194,7 @@ export default function DealsPage() {
               Value {formatINR(Number(d.valueInr ?? 0))} · Health {d.dealHealthScore ?? "—"} · updated{" "}
               {new Date(d.updatedAt).toLocaleString()}
             </p>
+            <div className="mt-1">{probabilityBadge(d.closureProbability)}</div>
             {user?.role === "SELLER" ? (
               <p className="mt-1 inline-flex items-center gap-1 text-xs text-[#00C49A]">
                 <CheckCircle className="h-3 w-3" />

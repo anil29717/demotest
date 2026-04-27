@@ -29,13 +29,23 @@ export class AuditController {
     UserRole.INSTITUTIONAL_BUYER,
     UserRole.INSTITUTIONAL_SELLER,
   )
-  myLogs(@CurrentUser() user: JwtPayloadUser, @Query('take') take?: string) {
-    const n = Math.min(200, Math.max(1, parseInt(take ?? '50', 10) || 50));
-    return this.prisma.activityLog.findMany({
-      where: { userId: user.sub },
-      orderBy: { createdAt: 'desc' },
-      take: n,
-    });
+  async myLogs(
+    @CurrentUser() user: JwtPayloadUser,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ) {
+    const take = Math.min(200, Math.max(1, parseInt(limit ?? '20', 10) || 20));
+    const skip = Math.max(0, parseInt(offset ?? '0', 10) || 0);
+    const [data, total] = await Promise.all([
+      this.prisma.activityLog.findMany({
+        where: { userId: user.sub },
+        orderBy: { createdAt: 'desc' },
+        take,
+        skip,
+      }),
+      this.prisma.activityLog.count({ where: { userId: user.sub } }),
+    ]);
+    return { data, total, hasMore: skip + data.length < total };
   }
 
   /** Module 31 — platform admin reads org-scoped trail */

@@ -1,6 +1,11 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  onDemandEntries: {
+    // Keep recently visited pages hot in dev for smoother sidebar navigation.
+    maxInactiveAge: 1000 * 60 * 10,
+    pagesBufferLength: 8,
+  },
   images: {
     domains: [
       "images.unsplash.com",
@@ -16,6 +21,8 @@ const nextConfig: NextConfig = {
       // Disk pack cache (.next/cache/webpack/*.pack.gz) can ENOENT on Windows when
       // the folder is cleared mid-build or another process touches it; memory avoids that.
       config.cache = { type: "memory" };
+      // Slightly reduce expensive source map processing in local dev route transitions.
+      config.devtool = "eval-cheap-module-source-map";
     }
     return config;
   },

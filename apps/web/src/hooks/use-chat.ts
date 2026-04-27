@@ -30,6 +30,7 @@ export function useChat(threadId: string | null, token: string | null) {
   const [typingUserId, setTypingUserId] = useState<string | null>(null);
   const socketRef = useRef<Socket | null>(null);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stopTypingBurstRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!threadId || !token) {
@@ -77,7 +78,7 @@ export function useChat(threadId: string | null, token: string | null) {
       if (p.isTyping) {
         setTypingUserId(p.userId);
         if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
-        typingTimerRef.current = setTimeout(() => setTypingUserId(null), 4000);
+        typingTimerRef.current = setTimeout(() => setTypingUserId(null), 2000);
       } else {
         setTypingUserId(null);
       }
@@ -117,6 +118,7 @@ export function useChat(threadId: string | null, token: string | null) {
 
     return () => {
       if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      if (stopTypingBurstRef.current) clearTimeout(stopTypingBurstRef.current);
       if (socket.connected) {
         socket.emit("leaveThread", { threadId });
       }
@@ -154,6 +156,26 @@ export function useChat(threadId: string | null, token: string | null) {
     s.emit("markRead", { threadId });
   }, [threadId]);
 
+  /** Emit typing true + schedule typing false after 1.5s idle (spec). */
+  const inputActivity = useCallback(() => {
+    const s = socketRef.current;
+    if (!s?.connected || !threadId) return;
+    s.emit("typing", { threadId, isTyping: true });
+    if (stopTypingBurstRef.current) clearTimeout(stopTypingBurstRef.current);
+    stopTypingBurstRef.current = setTimeout(() => {
+      s.emit("typing", { threadId, isTyping: false });
+      stopTypingBurstRef.current = null;
+    }, 1500);
+  }, [threadId]);
+
+  const flushTyping = useCallback(() => {
+    if (stopTypingBurstRef.current) clearTimeout(stopTypingBurstRef.current);
+    stopTypingBurstRef.current = null;
+    const s = socketRef.current;
+    if (!s?.connected || !threadId) return;
+    s.emit("typing", { threadId, isTyping: false });
+  }, [threadId]);
+
   return {
     messages,
     setMessages,
@@ -161,6 +183,8 @@ export function useChat(threadId: string | null, token: string | null) {
     typingUserId,
     sendSocketMessage,
     setTyping,
+    inputActivity,
+    flushTyping,
     markReadSocket,
   };
 }

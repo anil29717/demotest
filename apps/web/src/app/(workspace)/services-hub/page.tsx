@@ -13,6 +13,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { LoadingSkeleton } from "@/components/ui/loading-skeleton";
 
 type SvcReq = { id: string; type: string; status: string; createdAt: string };
+type OrgRow = { id: string; name?: string; organizationId?: string; isActive?: boolean };
 
 function BrokerServicesHub({
   token,
@@ -28,6 +29,24 @@ function BrokerServicesHub({
   const [requestId, setRequestId] = useState("");
   const [reqStatus, setReqStatus] = useState("in_progress");
   const [msg, setMsg] = useState<string | null>(null);
+  const [orgs, setOrgs] = useState<OrgRow[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void apiFetch<OrgRow[]>("/organizations/mine", { token })
+      .then((rows) => {
+        if (cancelled) return;
+        setOrgs(rows);
+        const active = rows.find((r) => r.isActive) ?? rows[0];
+        if (active && !orgId) setOrgId(active.organizationId || active.id);
+      })
+      .catch(() => {
+        if (!cancelled) setOrgs([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, orgId]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -124,12 +143,22 @@ function BrokerServicesHub({
         <form onSubmit={submit} className="mt-4 space-y-3">
           <label className="block">
             Organization ID
-            <input
+            <select
               required
               className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2"
               value={orgId}
               onChange={(e) => setOrgId(e.target.value)}
-            />
+            >
+              <option value="">Select organization</option>
+              {orgs.map((org) => {
+                const oid = org.organizationId || org.id;
+                return (
+                  <option key={oid} value={oid}>
+                    {(org.name || "Organization")} ({oid})
+                  </option>
+                );
+              })}
+            </select>
           </label>
           <label className="block">
             Deal ID (optional)

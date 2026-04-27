@@ -7,8 +7,11 @@ import { useAuth } from "@/contexts/auth-context";
 import { apiFetch } from "@/lib/api";
 
 type OrgMine = {
+  id: string;
+  name?: string;
   organizationId: string;
-  organization: { id: string; name: string };
+  isActive?: boolean;
+  organization?: { id: string; name: string };
 };
 
 export function NewDealForm() {
@@ -37,7 +40,8 @@ export function NewDealForm() {
     apiFetch<OrgMine[]>("/organizations/mine", { token })
       .then((o) => {
         setOrgs(o);
-        if (o[0]) setForm((f) => ({ ...f, organizationId: o[0].organizationId }));
+        const active = o.find((row) => row.isActive) ?? o[0];
+        if (active) setForm((f) => ({ ...f, organizationId: active.organizationId || active.id }));
       })
       .catch(() => setOrgs([]));
   }, [token]);
@@ -94,8 +98,8 @@ export function NewDealForm() {
           >
             <option value="">Select…</option>
             {orgs.map((o) => (
-              <option key={o.organizationId} value={o.organizationId}>
-                {o.organization.name}
+              <option key={o.organizationId || o.id} value={o.organizationId || o.id}>
+                {(o.name || o.organization?.name || "Organization")} ({o.organizationId || o.id})
               </option>
             ))}
           </select>

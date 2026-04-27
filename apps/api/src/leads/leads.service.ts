@@ -15,6 +15,17 @@ export class LeadsService {
         throw new BadRequestException('Not a member of organization');
       return organizationId;
     }
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { activeOrganizationId: true },
+    });
+    if (user?.activeOrganizationId) {
+      const activeMembership = await this.prisma.organizationMember.findFirst({
+        where: { userId, organizationId: user.activeOrganizationId },
+        select: { id: true },
+      });
+      if (activeMembership) return user.activeOrganizationId;
+    }
     const first = await this.prisma.organizationMember.findFirst({
       where: { userId },
       orderBy: { id: 'asc' },

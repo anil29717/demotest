@@ -13,6 +13,7 @@
     "dev:web": "npm run dev --workspace=web",
     "dev:web:clean": "npm run clean --workspace=web && npm run dev --workspace=web",
     "dev:api": "npm run start:dev --workspace=api",
+    "dev:ml": "python -m uvicorn apps.ml.main:app --reload --port 8001",
     "build": "npm run build --workspaces --if-present",
     "db:up": "docker compose -f infra/docker-compose.yml up -d",
     "db:down": "docker compose -f infra/docker-compose.yml down",

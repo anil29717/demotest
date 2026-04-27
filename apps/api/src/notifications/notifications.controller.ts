@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Put, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Put, Query, UseGuards } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -29,8 +29,14 @@ export class NotificationsController {
   }
 
   @Get()
-  list(@CurrentUser() user: JwtPayloadUser) {
-    return this.notifications.listForUser(user.sub);
+  list(
+    @CurrentUser() user: JwtPayloadUser,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ) {
+    const take = Math.min(100, Math.max(1, Number(limit ?? '20') || 20));
+    const skip = Math.max(0, Number(offset ?? '0') || 0);
+    return this.notifications.listForUser(user.sub, take, skip);
   }
 
   @Put(':id/read')

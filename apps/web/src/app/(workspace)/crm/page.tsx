@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Calendar, MessageSquare, MoreHorizontal, UserPlus, Users } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
@@ -20,6 +20,8 @@ type Lead = {
   followUps?: { id: string; dueAt: string; note: string | null; completed: boolean }[];
 };
 
+type OrgRow = { id: string; name?: string; organizationId?: string; isActive?: boolean };
+
 const STAGES = ["LEAD", "MATCH", "SITE_VISIT", "NEGOTIATION", "LEGAL", "CLOSURE"] as const;
 
 export default function CrmPage() {
@@ -32,27 +34,62 @@ export default function CrmPage() {
   const [followupAt, setFollowupAt] = useState("");
   const [followupNote, setFollowupNote] = useState("");
 
-  const { data: leads = [], isLoading } = useQuery({
-    queryKey: ["leads", token],
+  const { data: orgs, isLoading: orgsLoading } = useQuery({
+    queryKey: ["organizations-mine", token],
     enabled: Boolean(token),
     queryFn: () =>
-      apiFetch<Lead[]>("/leads?limit=50", { token: token ?? undefined }).catch(
-        () => [],
-      ),
+      apiFetch<OrgRow[]>("/organizations/mine", { token: token ?? undefined }).catch(() => []),
+    staleTime: 1000 * 60 * 5,
+  });
+
+  const activeOrg = (orgs ?? []).find((o) => o.isActive) ?? orgs?.[0] ?? null;
+  const [selectedOrgId, setSelectedOrgId] = useState<string>("");
+  const orgId = selectedOrgId || (activeOrg ? activeOrg.organizationId || activeOrg.id : null);
+
+  useEffect(() => {
+    if (selectedOrgId || !activeOrg) return;
+    setSelectedOrgId(activeOrg.organizationId || activeOrg.id);
+  }, [activeOrg, selectedOrgId]);
+
+  const leadsQueryKey = useMemo(() => ["leads", orgId, token] as const, [orgId, token]);
+
+  const { data: leads = [], isLoading: leadsLoading } = useQuery({
+    queryKey: leadsQueryKey,
+    enabled: Boolean(token) && orgs !== undefined,
+    queryFn: async () => {
+      const qs = new URLSearchParams({ limit: "50" });
+      if (orgId) qs.set("organizationId", orgId);
+      return apiFetch<Lead[]>(`/leads?${qs.toString()}`, {
+        token: token ?? undefined,
+      }).catch(() => []);
+    },
     staleTime: 1000 * 60 * 1,
   });
+
+  async function refetchLeadsAndReselect(prevId: string | null) {
+    await queryClient.invalidateQueries({ queryKey: ["leads"] });
+    if (!prevId || !token) return;
+    const qs = new URLSearchParams({ limit: "50" });
+    if (orgId) qs.set("organizationId", orgId);
+    const refreshed = await apiFetch<Lead[]>(`/leads?${qs.toString()}`, {
+      token: token ?? undefined,
+    }).catch(() => []);
+    setSelected(refreshed.find((l) => l.id === prevId) ?? null);
+  }
 
   async function createLead(e: React.FormEvent) {
     e.preventDefault();
     if (!token || !newLead.leadName.trim()) return;
+    const body: Record<string, unknown> = {
+      leadName: newLead.leadName,
+      source: newLead.source,
+      pipelineStage: newLead.stage,
+    };
+    if (orgId) body.organizationId = orgId;
     await apiFetch("/leads", {
       method: "POST",
       token,
-      body: JSON.stringify({
-        leadName: newLead.leadName,
-        source: newLead.source,
-        pipelineStage: newLead.stage,
-      }),
+      body: JSON.stringify(body),
     });
     setNewLead({ leadName: "", source: "manual", stage: "LEAD" });
     await queryClient.invalidateQueries({ queryKey: ["leads"] });
@@ -71,30 +108,28 @@ export default function CrmPage() {
   async function addNote(e: React.FormEvent) {
     e.preventDefault();
     if (!token || !selected || !note.trim()) return;
-    await apiFetch(`/leads/${selected.id}/notes`, {
+    const sid = selected.id;
+    await apiFetch(`/leads/${sid}/notes`, {
       method: "POST",
       token,
       body: JSON.stringify({ body: note }),
     });
     setNote("");
-    await queryClient.invalidateQueries({ queryKey: ["leads"] });
-    const refreshed = await apiFetch<Lead[]>("/leads?limit=50", { token: token ?? undefined }).catch(() => []);
-    setSelected(refreshed.find((l) => l.id === selected.id) ?? null);
+    await refetchLeadsAndReselect(sid);
   }
 
   async function addFollowup(e: React.FormEvent) {
     e.preventDefault();
     if (!token || !selected || !followupAt) return;
-    await apiFetch(`/leads/${selected.id}/followup`, {
+    const sid = selected.id;
+    await apiFetch(`/leads/${sid}/followup`, {
       method: "POST",
       token,
       body: JSON.stringify({ dueAt: new Date(followupAt).toISOString(), note: followupNote }),
     });
     setFollowupAt("");
     setFollowupNote("");
-    await queryClient.invalidateQueries({ queryKey: ["leads"] });
-    const refreshed = await apiFetch<Lead[]>("/leads?limit=50", { token: token ?? undefined }).catch(() => []);
-    setSelected(refreshed.find((l) => l.id === selected.id) ?? null);
+    await refetchLeadsAndReselect(sid);
   }
 
   if (!token)
@@ -106,7 +141,7 @@ export default function CrmPage() {
       </p>
     );
 
-  if (isLoading) {
+  if (orgsLoading || leadsLoading) {
     return (
       <div className="grid grid-cols-6 gap-4">
         {Array.from({ length: 6 }).map((_, i) => (
@@ -120,47 +155,93 @@ export default function CrmPage() {
     <div>
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="inline-flex items-center gap-2 text-2xl font-semibold"><Users className="h-6 w-6 text-[#00C49A]" />CRM leads</h1>
-          <p className="mt-1 text-sm text-zinc-500">Kanban + notes + follow-up scheduling</p>
+          <h1 className="inline-flex items-center gap-2 text-2xl font-semibold">
+            <Users className="h-6 w-6 text-[#00C49A]" />
+            CRM leads
+          </h1>
+          <p className="mt-1 text-sm text-zinc-500">
+            Kanban + notes + follow-up scheduling
+            {orgId ? (
+              <span className="ml-2 text-zinc-600">· Organization scoped</span>
+            ) : (
+              <span className="ml-2 text-amber-600/90">
+                · Join an organization to capture leads under an org workspace
+              </span>
+            )}
+          </p>
         </div>
-        <button type="button" onClick={() => setShowAdd((v) => !v)} className="inline-flex items-center gap-2 rounded-lg bg-[#00C49A] px-3 py-2 text-sm font-medium text-black"><UserPlus className="h-4 w-4" />Add lead +</button>
+        <button
+          type="button"
+          onClick={() => setShowAdd((v) => !v)}
+          className="inline-flex items-center gap-2 rounded-lg bg-[#00C49A] px-3 py-2 text-sm font-medium text-black"
+        >
+          <UserPlus className="h-4 w-4" />
+          Add lead +
+        </button>
       </div>
 
-      {showAdd && <form onSubmit={createLead} className="mt-6 flex flex-wrap items-end gap-2 rounded-xl border border-[#00C49A30] bg-[#0f0f0f] p-4 text-sm">
-        <label>
-          Name
-          <input
-            className="mt-1 w-44 rounded border border-zinc-700 bg-zinc-900 px-3 py-2"
-            value={newLead.leadName}
-            onChange={(e) => setNewLead((f) => ({ ...f, leadName: e.target.value }))}
-          />
-        </label>
-        <label>
-          Source
-          <input
-            className="mt-1 w-36 rounded border border-zinc-700 bg-zinc-900 px-3 py-2"
-            value={newLead.source}
-            onChange={(e) => setNewLead((f) => ({ ...f, source: e.target.value }))}
-          />
-        </label>
-        <label>
-          Stage
-          <select
-            className="mt-1 rounded border border-zinc-700 bg-zinc-900 px-3 py-2"
-            value={newLead.stage}
-            onChange={(e) => setNewLead((f) => ({ ...f, stage: e.target.value }))}
-          >
-            {STAGES.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button type="submit" className="rounded bg-teal-600 px-4 py-2 text-white">
-          Add lead
-        </button>
-      </form>}
+      {showAdd && (
+        <form
+          onSubmit={createLead}
+          className="mt-6 flex flex-wrap items-end gap-2 rounded-xl border border-[#00C49A30] bg-[#0f0f0f] p-4 text-sm"
+        >
+          <label>
+            Name
+            <input
+              className="mt-1 w-44 rounded border border-zinc-700 bg-zinc-900 px-3 py-2"
+              value={newLead.leadName}
+              onChange={(e) => setNewLead((f) => ({ ...f, leadName: e.target.value }))}
+            />
+          </label>
+          <label>
+            Source
+            <input
+              className="mt-1 w-36 rounded border border-zinc-700 bg-zinc-900 px-3 py-2"
+              value={newLead.source}
+              onChange={(e) => setNewLead((f) => ({ ...f, source: e.target.value }))}
+            />
+          </label>
+          <label>
+            Stage
+            <select
+              className="mt-1 rounded border border-zinc-700 bg-zinc-900 px-3 py-2"
+              value={newLead.stage}
+              onChange={(e) => setNewLead((f) => ({ ...f, stage: e.target.value }))}
+            >
+              {STAGES.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button type="submit" className="rounded bg-teal-600 px-4 py-2 text-white">
+            Add lead
+          </button>
+        </form>
+      )}
+
+      {orgs && orgs.length > 0 ? (
+        <div className="mt-4 max-w-md">
+          <label className="block text-xs text-zinc-500">
+            Organization context
+            <select
+              className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-200"
+              value={orgId ?? ""}
+              onChange={(e) => setSelectedOrgId(e.target.value)}
+            >
+              {orgs.map((o) => {
+                const oid = o.organizationId || o.id;
+                return (
+                  <option key={oid} value={oid}>
+                    {(o.name || "Organization")} ({oid})
+                  </option>
+                );
+              })}
+            </select>
+          </label>
+        </div>
+      ) : null}
 
       <div className="mt-6 grid gap-3 lg:grid-cols-3">
         {STAGES.map((stage) => (
@@ -180,7 +261,9 @@ export default function CrmPage() {
                       className="w-full text-left"
                     >
                       <p className="text-zinc-100">{l.leadName}</p>
-                      <p className="text-xs text-zinc-500">{l.source} · {timeAgo(l.createdAt)}</p>
+                      <p className="text-xs text-zinc-500">
+                        {l.source} · {timeAgo(l.createdAt)}
+                      </p>
                     </button>
                     <div className="mt-2 flex items-center justify-between gap-1">
                       <span className="inline-flex items-center gap-2 text-zinc-500">
@@ -189,16 +272,16 @@ export default function CrmPage() {
                         <MoreHorizontal className="h-3.5 w-3.5" />
                       </span>
                       <div className="flex flex-wrap gap-1">
-                      {STAGES.map((s) => (
-                        <button
-                          key={s}
-                          type="button"
-                          onClick={() => void moveLead(l.id, s)}
-                          className="rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-400"
-                        >
-                          {s}
-                        </button>
-                      ))}
+                        {STAGES.map((s) => (
+                          <button
+                            key={s}
+                            type="button"
+                            onClick={() => void moveLead(l.id, s)}
+                            className="rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-400"
+                          >
+                            {s}
+                          </button>
+                        ))}
                       </div>
                     </div>
                   </li>
@@ -211,7 +294,9 @@ export default function CrmPage() {
       {selected ? (
         <div className="mt-8 rounded-xl border border-zinc-800 bg-zinc-900/40 p-4 text-sm">
           <p className="font-medium text-zinc-100">Lead detail: {selected.leadName}</p>
-          <p className="mt-1 text-zinc-500">Status {selected.status} · Stage {selected.pipelineStage ?? "—"}</p>
+          <p className="mt-1 text-zinc-500">
+            Status {selected.status} · Stage {selected.pipelineStage ?? "—"}
+          </p>
           <div className="mt-4 grid gap-4 md:grid-cols-2">
             <form onSubmit={addNote}>
               <p className="text-zinc-300">Add note</p>

@@ -1,5 +1,5 @@
 /* AR Buildwel Phase 1 PWA shell — cache static assets only */
-const CACHE = "buildwel-shell-v1";
+const CACHE = "buildwel-shell-v2";
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(CACHE).then((cache) => cache.addAll(["/manifest.webmanifest", "/icon.svg"])),
@@ -7,7 +7,14 @@ self.addEventListener("install", (event) => {
   self.skipWaiting();
 });
 self.addEventListener("activate", (event) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(
+    caches
+      .keys()
+      .then((keys) =>
+        Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key))),
+      )
+      .then(() => self.clients.claim()),
+  );
 });
 self.addEventListener("fetch", (event) => {
   const { request } = event;
@@ -15,7 +22,14 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
   if (url.pathname.startsWith("/api")) return;
+  // Never intercept Next.js internals/routes in dev or prod.
+  if (url.pathname.startsWith("/_next")) return;
+  if (url.pathname === "/favicon.ico") return;
+  if (url.pathname.startsWith("/__nextjs")) return;
   event.respondWith(
-    caches.match(request).then((hit) => hit || fetch(request)),
+    caches.match(request).then((hit) => {
+      if (hit) return hit;
+      return fetch(request).catch(() => new Response("Offline", { status: 503 }));
+    }),
   );
 });

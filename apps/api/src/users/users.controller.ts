@@ -277,6 +277,15 @@ export class UsersController {
     });
   }
 
+  @Get('notification-preferences')
+  async getNotificationPrefs(@CurrentUser() user: JwtPayloadUser) {
+    const row = await this.prisma.user.findUnique({
+      where: { id: user.sub },
+      select: { notificationPrefs: true },
+    });
+    return (row?.notificationPrefs as Record<string, unknown> | null) ?? {};
+  }
+
   @Get(':id/trust-score')
   async trustScore(@Param('id') id: string) {
     const u = await this.prisma.user.findUnique({

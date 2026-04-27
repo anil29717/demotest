@@ -6,6 +6,7 @@ import {
   Param,
   Post,
   Put,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
@@ -62,19 +63,31 @@ export class ReviewsController {
   constructor(private readonly prisma: PrismaService) {}
 
   @Get('target/:id')
-  listForTarget(@Param('id') targetUserId: string) {
-    return this.prisma.review.findMany({
-      where: { targetUserId, status: 'approved' },
-      orderBy: { createdAt: 'desc' },
-      take: 50,
-      select: {
-        id: true,
-        rating: true,
-        comment: true,
-        createdAt: true,
-        reviewerId: true,
-      },
-    });
+  async listForTarget(
+    @Param('id') targetUserId: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ) {
+    const take = Math.min(100, Math.max(1, parseInt(limit ?? '20', 10) || 20));
+    const skip = Math.max(0, parseInt(offset ?? '0', 10) || 0);
+    const where = { targetUserId, status: 'approved' as const };
+    const [data, total] = await Promise.all([
+      this.prisma.review.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        take,
+        skip,
+        select: {
+          id: true,
+          rating: true,
+          comment: true,
+          createdAt: true,
+          reviewerId: true,
+        },
+      }),
+      this.prisma.review.count({ where }),
+    ]);
+    return { data, total, hasMore: skip + data.length < total };
   }
 
   @Get('property/:id')

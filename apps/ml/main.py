@@ -1,5 +1,10 @@
 from fastapi import FastAPI
-from routers import matching, valuation, fraud
+
+try:
+    from .routers import fraud, matching, valuation
+except ImportError:
+    # Running `uvicorn main:app` from `apps/ml` (not as package `apps.ml.main`).
+    from routers import fraud, matching, valuation
 
 app = FastAPI(
     title="AR Buildwel ML Service",

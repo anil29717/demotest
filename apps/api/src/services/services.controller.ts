@@ -18,6 +18,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { PrismaService } from '../prisma/prisma.service';
 import { IsIn, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { OrganizationsService } from '../organizations/organizations.service';
 
 class AssignPartnerDto {
   @IsString()
@@ -31,8 +32,8 @@ class UpdateServiceRequestStatusDto {
 }
 
 class CreateServiceRequestDto {
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   organizationId!: string;
 
   @IsIn(['legal', 'loan', 'insurance'])
@@ -56,7 +57,10 @@ class CreateServiceRequestDto {
   UserRole.INSTITUTIONAL_SELLER,
 )
 export class ServicesController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly organizations: OrganizationsService,
+  ) {}
 
   /** M24–M26 — catalog of partner-service verticals (requests via POST /services/requests). */
   @Get('catalog')
@@ -84,24 +88,36 @@ export class ServicesController {
 
   @Post('requests')
   create(
-    @CurrentUser() _user: JwtPayloadUser,
+    @CurrentUser() user: JwtPayloadUser,
     @Body() dto: CreateServiceRequestDto,
   ) {
-    return this.prisma.serviceRequest.create({
-      data: {
-        organizationId: dto.organizationId,
-        dealId: dto.dealId,
-        type: dto.type,
-        status: 'open',
-      },
-    });
+    return this.organizations
+      .resolveOrganizationIdForUser(user.sub, dto.organizationId)
+      .then((orgId) => {
+        if (!orgId) throw new ForbiddenException('Organization access required');
+        return this.prisma.serviceRequest.create({
+          data: {
+            organizationId: orgId,
+            dealId: dto.dealId,
+            type: dto.type,
+            status: 'open',
+          },
+        });
+      });
   }
 
   @Get('requests')
-  list(@Query('organizationId') organizationId: string) {
-    if (!organizationId) return [];
+  async list(
+    @CurrentUser() user: JwtPayloadUser,
+    @Query('organizationId') organizationId?: string,
+  ) {
+    const resolved = await this.organizations.resolveOrganizationIdForUser(
+      user.sub,
+      organizationId,
+    );
+    if (!resolved) return [];
     return this.prisma.serviceRequest.findMany({
-      where: { organizationId },
+      where: { organizationId: resolved },
       orderBy: { createdAt: 'desc' },
     });
   }

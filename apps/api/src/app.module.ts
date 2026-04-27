@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { PrismaModule } from './prisma/prisma.module';
 import { RedisModule } from './redis/redis.module';
 import { AuditModule } from './audit/audit.module';
@@ -35,10 +37,18 @@ import { DashboardModule } from './dashboard/dashboard.module';
 import { ReviewsModule } from './reviews/reviews.module';
 import { EscrowModule } from './escrow/escrow.module';
 import { ChatModule } from './chat/chat.module';
+import { ApiProductModule } from './api-product/api-product.module';
+import { CrawlerAdminModule } from './crawler-admin/crawler-admin.module';
+import { BuilderModule } from './builder/builder.module';
+import { AppThrottlerGuard } from './common/guards/app-throttler.guard';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    ThrottlerModule.forRoot([
+      { name: 'short', ttl: 60000, limit: 100 },
+      { name: 'auth', ttl: 60000, limit: 10 },
+    ]),
     ScheduleModule.forRoot(),
     PrismaModule,
     RedisModule,
@@ -73,7 +83,11 @@ import { ChatModule } from './chat/chat.module';
     ReviewsModule,
     EscrowModule,
     ChatModule,
+    ApiProductModule,
+    CrawlerAdminModule,
+    BuilderModule,
   ],
   controllers: [HealthController],
+  providers: [{ provide: APP_GUARD, useClass: AppThrottlerGuard }],
 })
 export class AppModule {}

@@ -5,6 +5,7 @@ export type AppRole =
   | "SELLER"
   | "NRI"
   | "HNI"
+  | "BUILDER"
   | "INSTITUTIONAL_BUYER"
   | "INSTITUTIONAL_SELLER";
 
@@ -78,13 +79,31 @@ export const SIDEBAR_ITEMS: NavItem[] = [
     href: "/dashboard",
     label: "Dashboard",
     icon: "layout-dashboard",
-    roles: ["ADMIN", "BROKER", "BUYER", "SELLER", "NRI", "HNI", "INSTITUTIONAL_BUYER", "INSTITUTIONAL_SELLER"],
+    roles: ["ADMIN", "BROKER", "BUYER", "SELLER", "NRI", "HNI", "BUILDER", "INSTITUTIONAL_BUYER", "INSTITUTIONAL_SELLER"],
   },
   {
     href: "/properties",
     label: "Properties",
     icon: "building-2",
     roles: ["ADMIN", "BROKER", "SELLER", "NRI", "INSTITUTIONAL_SELLER"],
+  },
+  {
+    href: "/builder/projects",
+    label: "My projects",
+    icon: "building-2",
+    roles: ["ADMIN", "BUILDER"],
+  },
+  {
+    href: "/builder/projects/new",
+    label: "Add project",
+    icon: "plus-circle",
+    roles: ["ADMIN", "BUILDER"],
+  },
+  {
+    href: "/builder/bookings",
+    label: "Bookings",
+    icon: "briefcase",
+    roles: ["ADMIN", "BUILDER", "BUYER"],
   },
   {
     href: "/properties/new",
@@ -114,7 +133,7 @@ export const SIDEBAR_ITEMS: NavItem[] = [
     href: "/broker-network",
     label: "Broker network",
     icon: "bar-chart-3",
-    roles: ["ADMIN", "BROKER", "NRI", "HNI", "INSTITUTIONAL_BUYER", "INSTITUTIONAL_SELLER"],
+    roles: ["ADMIN", "BROKER", "NRI", "HNI", "BUILDER", "INSTITUTIONAL_BUYER", "INSTITUTIONAL_SELLER"],
   },
   { href: "/deals", label: "Deals", icon: "briefcase", roles: ["ADMIN", "BROKER", "SELLER", "BUYER"] },
   {
@@ -139,13 +158,13 @@ export const SIDEBAR_ITEMS: NavItem[] = [
   { href: "/auctions", label: "Auctions", icon: "gavel", roles: ["ADMIN", "BROKER", "HNI"] },
   { href: "/verticals/nri", label: "NRI", icon: "globe", roles: ["ADMIN", "NRI"] },
   { href: "/verticals/hni", label: "HNI", icon: "trending-up", roles: ["ADMIN", "HNI"] },
-  { href: "/partners", label: "Partners", icon: "handshake", roles: ["ADMIN", "BROKER"] },
+  { href: "/partners", label: "Partners", icon: "handshake", roles: ["ADMIN", "BROKER", "BUILDER"] },
   { href: "/irm", label: "IRM", icon: "line-chart", roles: ["ADMIN", "BROKER", "HNI", "NRI"] },
   {
     href: "/billing",
     label: "Billing",
     icon: "credit-card",
-    roles: ["ADMIN", "BROKER", "SELLER", "NRI", "HNI", "INSTITUTIONAL_BUYER", "INSTITUTIONAL_SELLER"],
+    roles: ["ADMIN", "BROKER", "SELLER", "NRI", "HNI", "BUILDER", "INSTITUTIONAL_BUYER", "INSTITUTIONAL_SELLER"],
   },
   {
     href: "/search",
@@ -153,7 +172,7 @@ export const SIDEBAR_ITEMS: NavItem[] = [
     icon: "search",
     roles: ["ADMIN", "BROKER", "BUYER", "SELLER", "NRI", "HNI", "INSTITUTIONAL_BUYER", "INSTITUTIONAL_SELLER"],
   },
-  { href: "/analytics", label: "Analytics", icon: "bar-chart-3", roles: ["ADMIN", "BROKER", "SELLER", "HNI"] },
+  { href: "/analytics", label: "Analytics", icon: "bar-chart-3", roles: ["ADMIN", "BROKER", "SELLER", "HNI", "BUILDER"] },
   {
     href: "/compliance",
     label: "Compliance",
@@ -164,7 +183,7 @@ export const SIDEBAR_ITEMS: NavItem[] = [
     href: "/services-hub",
     label: "Legal & loans",
     icon: "scale",
-    roles: ["ADMIN", "BROKER", "BUYER", "SELLER", "NRI", "HNI", "INSTITUTIONAL_BUYER", "INSTITUTIONAL_SELLER"],
+    roles: ["ADMIN", "BROKER", "BUYER", "SELLER", "NRI", "HNI", "BUILDER", "INSTITUTIONAL_BUYER", "INSTITUTIONAL_SELLER"],
   },
   {
     href: "/onboarding",
@@ -176,21 +195,25 @@ export const SIDEBAR_ITEMS: NavItem[] = [
     href: "/reputation",
     label: "Reputation",
     icon: "award",
-    roles: ["ADMIN", "BROKER", "BUYER", "SELLER", "NRI", "HNI", "INSTITUTIONAL_BUYER", "INSTITUTIONAL_SELLER"],
+    roles: ["ADMIN", "BROKER", "BUYER", "SELLER", "NRI", "HNI", "BUILDER", "INSTITUTIONAL_BUYER", "INSTITUTIONAL_SELLER"],
   },
   {
     href: "/settings/notifications",
     label: "Alert prefs",
     icon: "sliders-horizontal",
-    roles: ["ADMIN", "BROKER", "BUYER", "SELLER", "NRI", "HNI", "INSTITUTIONAL_BUYER", "INSTITUTIONAL_SELLER"],
+    roles: ["ADMIN", "BROKER", "BUYER", "SELLER", "NRI", "HNI", "BUILDER", "INSTITUTIONAL_BUYER", "INSTITUTIONAL_SELLER"],
   },
   {
     href: "/export",
     label: "Export data",
     icon: "download",
-    roles: ["ADMIN", "BROKER", "BUYER", "SELLER", "NRI", "HNI", "INSTITUTIONAL_BUYER", "INSTITUTIONAL_SELLER"],
+    roles: ["ADMIN", "BROKER", "BUYER", "SELLER", "NRI", "HNI", "BUILDER", "INSTITUTIONAL_BUYER", "INSTITUTIONAL_SELLER"],
   },
   { href: "/admin/whatsapp", label: "WhatsApp (admin)", icon: "bell", roles: ["ADMIN"] },
+  { href: "/admin/escrow", label: "Escrow (admin)", icon: "credit-card", roles: ["ADMIN"] },
+  { href: "/admin/crawler", label: "Crawler (admin)", icon: "rocket", roles: ["ADMIN"] },
+  { href: "/admin/api-usage", label: "API usage (admin)", icon: "bar-chart-3", roles: ["ADMIN"] },
+  { href: "/api-product", label: "API product", icon: "rocket", roles: ["ADMIN", "BROKER", "BUILDER"] },
   { href: "/admin/fraud", label: "Fraud (admin)", icon: "shield-check", roles: ["ADMIN"] },
   { href: "/admin/audit", label: "Audit (admin)", icon: "scroll-text", roles: ["ADMIN"] },
   { href: "/admin/reviews", label: "Reviews (admin)", icon: "star", roles: ["ADMIN"] },
@@ -459,6 +482,47 @@ export const INSTITUTIONAL_SELLER_SIDEBAR_SECTIONS: BrokerSidebarSection[] = [
   },
 ];
 
+export const BUILDER_SIDEBAR_SECTIONS: BrokerSidebarSection[] = [
+  {
+    category: "Overview",
+    items: [
+      { href: "/dashboard", label: "Dashboard", icon: "layout-dashboard" },
+      { href: "/analytics", label: "Analytics", icon: "bar-chart-3" },
+    ],
+  },
+  {
+    category: "Projects",
+    items: [
+      { href: "/builder/projects", label: "My projects", icon: "building-2" },
+      { href: "/builder/projects/new", label: "Add project", subItem: true },
+      { href: "/builder/bookings", label: "Bookings", icon: "briefcase" },
+    ],
+  },
+  {
+    category: "Network",
+    items: [
+      { href: "/broker-network", label: "Broker network", icon: "users" },
+      { href: "/partners", label: "Partners", icon: "handshake" },
+    ],
+  },
+  {
+    category: "Services",
+    items: [
+      { href: "/services-hub", label: "Legal & loans", icon: "scale" },
+      { href: "/settings/notifications", label: "Alert prefs", icon: "bell" },
+    ],
+  },
+  {
+    category: "Account",
+    items: [
+      { href: "/reputation", label: "Reputation", icon: "award" },
+      { href: "/billing", label: "Billing", icon: "credit-card" },
+      { href: "/export", label: "Export data", icon: "download" },
+      { href: "/api-product", label: "API access", icon: "rocket" },
+    ],
+  },
+];
+
 export const SELLER_SIDEBAR_SECTIONS: SellerSidebarSection[] = [
   {
     category: "Overview",
@@ -567,6 +631,13 @@ export function itemsForRole(role?: string | null): NavItem[] {
       .map((href) => SIDEBAR_ITEMS.find((item) => item.href === href))
       .filter((item): item is NavItem => Boolean(item))
       .filter((item) => item.roles.includes("INSTITUTIONAL_SELLER"));
+  }
+  if (role === "BUILDER") {
+    const orderedHrefs = BUILDER_SIDEBAR_SECTIONS.flatMap((s) => s.items.map((i) => i.href));
+    return orderedHrefs
+      .map((href) => SIDEBAR_ITEMS.find((item) => item.href === href))
+      .filter((item): item is NavItem => Boolean(item))
+      .filter((item) => item.roles.includes("BUILDER"));
   }
   return SIDEBAR_ITEMS.filter((i) => i.roles.includes(role as AppRole));
 }

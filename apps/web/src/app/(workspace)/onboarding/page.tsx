@@ -3,7 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Building2,
   ChevronLeft,
@@ -122,6 +122,7 @@ function toggleChip(list: string[], value: string): string[] {
 
 export default function OnboardingPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { token, user } = useAuth();
   const role = (user?.role ?? "BUYER") as Role;
   const totalSteps = role === "BROKER" ? 4 : role === "ADMIN" ? 1 : 2;
@@ -148,6 +149,7 @@ export default function OnboardingPage() {
   const [orgName, setOrgName] = useState("");
   const [joinMode, setJoinMode] = useState<"join" | "create">("join");
   const [inviteCode, setInviteCode] = useState("");
+  const inviteToken = searchParams.get("invite") ?? "";
 
   const [hasProperty, setHasProperty] = useState(true);
   const [sellerPropertyType, setSellerPropertyType] = useState("Residential");
@@ -206,7 +208,14 @@ export default function OnboardingPage() {
   function canContinue(): boolean {
     if (!name.trim()) return false;
     if (role === "BROKER" && step === 2 && !reraId.trim()) return false;
-    if (role === "BROKER" && step === 4 && orgMode === "team" && !orgName.trim()) return false;
+    if (
+      role === "BROKER" &&
+      step === 4 &&
+      orgMode === "team" &&
+      joinMode === "create" &&
+      !orgName.trim()
+    )
+      return false;
     if (role === "BROKER" && step === totalSteps && cities.length === 0) return false;
     if (role === "NRI" && step === 2 && !nriCountry.trim()) return false;
     if (role === "INSTITUTIONAL_BUYER" && step === 2 && !instOrgName.trim()) return false;
@@ -251,6 +260,63 @@ export default function OnboardingPage() {
     if (!token) return;
     setSaving(true);
     try {
+      const roleNeedsOrg =
+        role === "BROKER" || role === "INSTITUTIONAL_BUYER" || role === "INSTITUTIONAL_SELLER";
+      if (roleNeedsOrg) {
+        const memberships = await apiFetch<{ organizationId: string }[]>("/organizations/mine", {
+          token,
+        }).catch(() => []);
+        if (!memberships.length) {
+          if (role === "BROKER") {
+            if (orgMode === "independent") {
+              toast.error("Brokers must join or create an organization.");
+              return;
+            }
+            if (joinMode === "join") {
+              const code = inviteCode.trim();
+              if (!code && !inviteToken) {
+                toast.error("Enter invite code or use an invite link.");
+                return;
+              }
+              await apiFetch("/organizations/join", {
+                method: "POST",
+                token,
+                body: JSON.stringify({ code: code || undefined, token: inviteToken || undefined }),
+              });
+            } else {
+              await apiFetch("/organizations", {
+                method: "POST",
+                token,
+                body: JSON.stringify({
+                  name: orgName.trim(),
+                  reraNumber: reraId.trim() || undefined,
+                  gstNumber: gstNumber.trim() || undefined,
+                }),
+              });
+            }
+          } else {
+            const code = inviteCode.trim();
+            if (!instOrgName.trim() && !inviteToken && !code) {
+              toast.error("Institutional roles must join or create an organization.");
+              return;
+            }
+            if (inviteToken || code) {
+              await apiFetch("/organizations/join", {
+                method: "POST",
+                token,
+                body: JSON.stringify({ token: inviteToken || undefined, code: code || undefined }),
+              });
+            } else {
+              await apiFetch("/organizations", {
+                method: "POST",
+                token,
+                body: JSON.stringify({ name: instOrgName.trim() }),
+              });
+            }
+          }
+        }
+      }
+
       if (role === "BROKER" && cities.length > 0) {
         await apiFetch("/user/profile", {
           method: "PUT",
@@ -831,6 +897,15 @@ export default function OnboardingPage() {
               <input className="mt-1 w-full rounded-lg border border-[#333333] bg-[#0b0b0b] px-3 py-2 text-white" value={instOrgName} onChange={(e) => setInstOrgName(e.target.value)} />
             </label>
             <label className="block">
+              Invite code (optional, if joining existing org)
+              <input
+                placeholder="ORG-INVITE-CODE"
+                className="mt-1 w-full rounded-lg border border-[#333333] bg-[#0b0b0b] px-3 py-2 text-white"
+                value={inviteCode}
+                onChange={(e) => setInviteCode(e.target.value)}
+              />
+            </label>
+            <label className="block">
               Organization type
               <select className="mt-1 w-full rounded-lg border border-[#333333] bg-[#0b0b0b] px-3 py-2 text-white" value={instOrgType} onChange={(e) => setInstOrgType(e.target.value)}>
                 {ORG_TYPES.map((item) => (
@@ -883,6 +958,15 @@ export default function OnboardingPage() {
                   </option>
                 ))}
               </select>
+            </label>
+            <label className="block">
+              Invite code (optional, if joining existing org)
+              <input
+                placeholder="ORG-INVITE-CODE"
+                className="mt-1 w-full rounded-lg border border-[#333333] bg-[#0b0b0b] px-3 py-2 text-white"
+                value={inviteCode}
+                onChange={(e) => setInviteCode(e.target.value)}
+              />
             </label>
             <div>
               <p>Transaction intent</p>

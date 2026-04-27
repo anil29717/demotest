@@ -50,8 +50,10 @@ export class SearchController {
       hits: result.hits,
       total: result.total,
       tookMs: result.tookMs,
+      took: result.took,
       note: result.note,
       fallback: result.fallback,
+      facets: result.facets,
     };
   }
 
@@ -134,8 +136,10 @@ export class SearchController {
           hits: result.hits,
           total: result.total,
           tookMs: result.tookMs,
+          took: result.took,
           note: result.note,
           fallback: result.fallback,
+          facets: result.facets,
         };
       });
   }

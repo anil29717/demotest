@@ -4,26 +4,33 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtPayloadUser } from '../common/decorators/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
+import { OrganizationsService } from '../organizations/organizations.service';
 
 @Controller('export')
 @UseGuards(JwtAuthGuard)
 export class ExportController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly organizations: OrganizationsService,
+  ) {}
 
   @Get('deals')
   async dealsCsv(
     @CurrentUser() user: JwtPayloadUser,
-    @Query('organizationId') organizationId: string,
+    @Query('organizationId') organizationId: string | undefined,
     @Res() res: Response,
   ) {
-    const member = await this.prisma.organizationMember.findFirst({
-      where: { userId: user.sub, organizationId },
-    });
-    if (!member) {
+    const resolved = await this.organizations.resolveOrganizationIdForUser(
+      user.sub,
+      organizationId,
+    );
+    if (!resolved) {
       res.status(403).send('Forbidden');
       return;
     }
-    const rows = await this.prisma.deal.findMany({ where: { organizationId } });
+    const rows = await this.prisma.deal.findMany({
+      where: { organizationId: resolved },
+    });
     const header =
       'id,stage,requirementId,propertyId,institutionId,createdAt\n';
     const body = rows
@@ -40,18 +47,19 @@ export class ExportController {
   @Get('properties')
   async propertiesCsv(
     @CurrentUser() user: JwtPayloadUser,
-    @Query('organizationId') organizationId: string,
+    @Query('organizationId') organizationId: string | undefined,
     @Res() res: Response,
   ) {
-    const member = await this.prisma.organizationMember.findFirst({
-      where: { userId: user.sub, organizationId },
-    });
-    if (!member) {
+    const resolved = await this.organizations.resolveOrganizationIdForUser(
+      user.sub,
+      organizationId,
+    );
+    if (!resolved) {
       res.status(403).send('Forbidden');
       return;
     }
     const rows = await this.prisma.property.findMany({
-      where: { organizationId },
+      where: { organizationId: resolved },
     });
     const header = 'id,title,city,dealType,price,areaSqft,status,createdAt\n';
     const body = rows
@@ -71,17 +79,20 @@ export class ExportController {
   @Get('leads')
   async leads(
     @CurrentUser() user: JwtPayloadUser,
-    @Query('organizationId') organizationId: string,
+    @Query('organizationId') organizationId: string | undefined,
     @Res() res: Response,
   ) {
-    const member = await this.prisma.organizationMember.findFirst({
-      where: { userId: user.sub, organizationId },
-    });
-    if (!member) {
+    const resolved = await this.organizations.resolveOrganizationIdForUser(
+      user.sub,
+      organizationId,
+    );
+    if (!resolved) {
       res.status(403).send('Forbidden');
       return;
     }
-    const rows = await this.prisma.lead.findMany({ where: { organizationId } });
+    const rows = await this.prisma.lead.findMany({
+      where: { organizationId: resolved },
+    });
     const header = 'id,leadName,source,status,pipelineStage,createdAt\n';
     const body = rows
       .map(

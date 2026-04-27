@@ -1,4 +1,9 @@
-import { Logger, UnauthorizedException } from '@nestjs/common';
+import {
+  forwardRef,
+  Inject,
+  Logger,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import {
@@ -37,6 +42,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   constructor(
     private readonly jwt: JwtService,
+    @Inject(forwardRef(() => ChatService))
     private readonly chat: ChatService,
     private readonly config: ConfigService,
   ) {}
@@ -86,6 +92,17 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return sockets.some(
         (s) => (s.data as { userId?: string }).userId === userId,
       );
+    } catch {
+      return false;
+    }
+  }
+
+  /** User joined `user:${userId}` on socket connect — used for presence in chat UI. */
+  async isUserOnline(userId: string): Promise<boolean> {
+    if (!this.server) return false;
+    try {
+      const sockets = await this.server.in(`user:${userId}`).fetchSockets();
+      return sockets.length > 0;
     } catch {
       return false;
     }

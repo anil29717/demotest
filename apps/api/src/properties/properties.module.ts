@@ -10,5 +10,6 @@ import { MatchingModule } from '../matching/matching.module';
   imports: [MatchingModule, FraudModule, SearchModule, ContactPolicyModule],
   controllers: [PropertiesController],
   providers: [PropertiesService],
+  exports: [PropertiesService],
 })
 export class PropertiesModule {}

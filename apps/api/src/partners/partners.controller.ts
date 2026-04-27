@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -34,8 +34,18 @@ export class PartnersController {
 
   @Get()
   @Roles(UserRole.ADMIN, UserRole.BROKER)
-  list() {
-    return this.prisma.partner.findMany({ orderBy: { createdAt: 'desc' } });
+  async list(@Query('limit') limit?: string, @Query('offset') offset?: string) {
+    const take = Math.min(100, Math.max(1, parseInt(limit ?? '20', 10) || 20));
+    const skip = Math.max(0, parseInt(offset ?? '0', 10) || 0);
+    const [data, total] = await Promise.all([
+      this.prisma.partner.findMany({
+        orderBy: { createdAt: 'desc' },
+        take,
+        skip,
+      }),
+      this.prisma.partner.count(),
+    ]);
+    return { data, total, hasMore: skip + data.length < total };
   }
 
   @Post()

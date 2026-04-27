@@ -1,5 +1,5 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
-import { UserRole } from '@prisma/client';
+import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { EscrowStatus, UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtPayloadUser } from '../common/decorators/current-user.decorator';
@@ -13,6 +13,18 @@ import { EscrowService } from './escrow.service';
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class EscrowController {
   constructor(private readonly escrow: EscrowService) {}
+
+  @Get('admin')
+  @Roles(UserRole.ADMIN)
+  listEscrowsAdmin(@Query('status') status?: string) {
+    const st = status?.trim().toUpperCase();
+    const valid =
+      st &&
+      (Object.values(EscrowStatus) as string[]).includes(st);
+    return this.escrow.listEscrowsForAdmin(
+      valid ? { status: st as EscrowStatus } : undefined,
+    );
+  }
 
   @Post('deals/:dealId/initiate')
   @Roles(UserRole.BUYER)
@@ -47,6 +59,20 @@ export class EscrowController {
     @CurrentUser() user: JwtPayloadUser,
   ) {
     return this.escrow.releaseEscrow(dealId, user.sub);
+  }
+
+  @Post('deals/:dealId/confirm-payout')
+  @Roles(UserRole.ADMIN)
+  confirmPayout(
+    @Param('dealId') dealId: string,
+    @Body() body: { payoutReference?: string },
+    @CurrentUser() user: JwtPayloadUser,
+  ) {
+    return this.escrow.confirmManualPayout(
+      dealId,
+      user.sub,
+      body.payoutReference ?? '',
+    );
   }
 
   @Post('deals/:dealId/refund')

@@ -42,6 +42,8 @@ type EscrowStatusPayload =
         releasedAt: string | null;
         refundedAt: string | null;
         frozenAt: string | null;
+        pendingPayoutAt: string | null;
+        payoutReference: string | null;
       };
       transactions: { id: string; type: string; createdAt: string; amountPaise: number }[];
     };
@@ -246,7 +248,7 @@ export default function DealDetailPage() {
     setEscrowBusy(true);
     try {
       await apiFetch(`/escrow/deals/${id}/release`, { method: "POST", token });
-      toast.success("Escrow released");
+      toast.success("Payout requested — admin confirms after manual transfer");
       loadEscrow();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Release failed");
@@ -424,7 +426,7 @@ export default function DealDetailPage() {
                       onClick={() => void releaseEscrow()}
                       className="rounded border border-zinc-600 px-3 py-1.5 text-zinc-200 hover:bg-zinc-800"
                     >
-                      Release to seller
+                      Request seller payout
                     </button>
                     {isAdmin && (
                       <button
@@ -440,8 +442,29 @@ export default function DealDetailPage() {
                 )}
               </>
             )}
+            {escrow.account.status === "PENDING_PAYOUT" && (
+              <div className="rounded border border-amber-900/40 bg-amber-950/25 px-3 py-2 text-amber-100">
+                <p className="font-medium">Awaiting manual payout</p>
+                <p className="mt-1 text-xs text-amber-200/80">
+                  Transfer {formatINR(Math.round(escrow.account.amountPaise / 100))} to the seller outside the app.
+                  Admin will mark released after entering the bank/Razorpay reference.
+                </p>
+                {escrow.account.pendingPayoutAt ? (
+                  <p className="mt-2 text-[11px] text-amber-200/60">
+                    Requested {new Date(escrow.account.pendingPayoutAt).toLocaleString()}
+                  </p>
+                ) : null}
+              </div>
+            )}
             {escrow.account.status === "RELEASED" && escrow.account.releasedAt && (
-              <p>Released on {new Date(escrow.account.releasedAt).toLocaleString()}</p>
+              <div>
+                <p>Released on {new Date(escrow.account.releasedAt).toLocaleString()}</p>
+                {escrow.account.payoutReference ? (
+                  <p className="mt-1 text-xs text-zinc-500">
+                    Payout reference: <span className="font-mono">{escrow.account.payoutReference}</span>
+                  </p>
+                ) : null}
+              </div>
             )}
             {escrow.account.status === "FROZEN" && (
               <p className="text-amber-200">Dispute in progress — escrow is frozen.</p>

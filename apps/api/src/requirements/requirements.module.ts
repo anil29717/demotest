@@ -8,5 +8,6 @@ import { ContactPolicyModule } from '../contact-policy/contact-policy.module';
   imports: [MatchingModule, ContactPolicyModule],
   controllers: [RequirementsController],
   providers: [RequirementsService],
+  exports: [RequirementsService],
 })
 export class RequirementsModule {}

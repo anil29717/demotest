@@ -5,6 +5,7 @@ import { MatchingModule } from '../matching/matching.module';
 import { DealsService } from './deals.service';
 import { DealsController } from './deals.controller';
 import { OrchestrationModule } from '../orchestration/orchestration.module';
+import { DealScoreService } from './deal-score.service';
 
 @Module({
   imports: [
@@ -14,6 +15,6 @@ import { OrchestrationModule } from '../orchestration/orchestration.module';
     forwardRef(() => ChatModule),
   ],
   controllers: [DealsController],
-  providers: [DealsService],
+  providers: [DealsService, DealScoreService],
 })
 export class DealsModule {}

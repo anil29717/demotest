@@ -28,6 +28,7 @@ const SELF_SIGNUP_ROLES: ReadonlySet<UserRole> = new Set([
   UserRole.SELLER,
   UserRole.NRI,
   UserRole.HNI,
+  UserRole.BUILDER,
   UserRole.INSTITUTIONAL_BUYER,
   UserRole.INSTITUTIONAL_SELLER,
 ]);
@@ -48,6 +49,9 @@ export class AuthService {
 
   async requestOtp(phone: string) {
     const hash = phoneHash(phone);
+    if (this.redis.redis.status === 'wait') {
+      await this.redis.redis.connect();
+    }
     const otp =
       this.config.get<string>('OTP_DEV_MODE') === 'true'
         ? '123456'
@@ -62,6 +66,9 @@ export class AuthService {
   async verifyOtp(phone: string, otp: string, role?: UserRole) {
     const hash = phoneHash(phone);
     const key = `otp:${hash}`;
+    if (this.redis.redis.status === 'wait') {
+      await this.redis.redis.connect();
+    }
     const expected = await this.redis.redis.get(key);
     if (!expected || expected !== otp) {
       throw new UnauthorizedException('Invalid OTP');
@@ -131,9 +138,10 @@ export class AuthService {
       [UserRole.SELLER]: '9990000003',
       [UserRole.NRI]: '9990000004',
       [UserRole.HNI]: '9990000005',
-      [UserRole.INSTITUTIONAL_SELLER]: '9990000006',
-      [UserRole.INSTITUTIONAL_BUYER]: '9990000007',
-      [UserRole.ADMIN]: '9990000008',
+      [UserRole.BUILDER]: '9990000006',
+      [UserRole.INSTITUTIONAL_SELLER]: '9990000007',
+      [UserRole.INSTITUTIONAL_BUYER]: '9990000008',
+      [UserRole.ADMIN]: '9990000009',
     };
 
     const phone = roleToPhone[role];

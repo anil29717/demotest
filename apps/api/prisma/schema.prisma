@@ -13,6 +13,7 @@ enum UserRole {
   SELLER
   NRI
   HNI
+  BUILDER
   INSTITUTIONAL_SELLER
   INSTITUTIONAL_BUYER
   ADMIN
@@ -22,6 +23,13 @@ enum OrgRole {
   ADMIN
   AGENT
   VIEWER
+}
+
+enum OrganizationInviteStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
 }
 
 enum PropertyType {
@@ -111,6 +119,7 @@ enum InvoiceStatus {
 enum EscrowStatus {
   INITIATED
   HELD
+  PENDING_PAYOUT
   RELEASED
   REFUNDED
   DISPUTED
@@ -148,6 +157,7 @@ model User {
   verified   Boolean  @default(false)
   notificationPrefs   Json?
   onboardingStep      String?
+  activeOrganizationId String?
   serviceAreas        String[] @default([])
   reraId              String?
   reputationScore     Float    @default(0)
@@ -156,6 +166,7 @@ model User {
   updatedAt  DateTime @updatedAt
 
   organizationMembers OrganizationMember[]
+  activeOrganization  Organization?       @relation("ActiveOrganization", fields: [activeOrganizationId], references: [id], onDelete: SetNull)
   savedSearches       SavedSearch[]
   properties          Property[]
   requirements        Requirement[]
@@ -180,6 +191,10 @@ model User {
   escrowBroker        EscrowAccount[]      @relation("EscrowBroker")
   escrowTxFrom        EscrowTransaction[] @relation("EscrowTxFrom")
   escrowTxTo          EscrowTransaction[] @relation("EscrowTxTo")
+  apiKeys             ApiKey[]
+  builderProjects     BuilderProject[]    @relation("BuilderProjectOwner")
+  projectBookings     ProjectBooking[]    @relation("ProjectBookingBuyer")
+  organizationInvitesCreated OrganizationInvite[] @relation("InviteCreatedBy")
 }
 
 model Organization {
@@ -190,6 +205,8 @@ model Organization {
   createdAt  DateTime @default(now())
 
   members    OrganizationMember[]
+  invites          OrganizationInvite[]
+  activeUsers      User[]               @relation("ActiveOrganization")
   leads           Lead[]
   deals           Deal[]
   properties      Property[]
@@ -205,6 +222,24 @@ model OrganizationMember {
   user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([organizationId, userId])
+}
+
+model OrganizationInvite {
+  id             String                   @id @default(cuid())
+  organizationId String
+  createdById    String
+  code           String                   @unique
+  token          String                   @unique
+  role           OrgRole                  @default(AGENT)
+  status         OrganizationInviteStatus @default(PENDING)
+  maxUses        Int                      @default(1)
+  usedCount      Int                      @default(0)
+  expiresAt      DateTime
+  createdAt      DateTime                 @default(now())
+  updatedAt      DateTime                 @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    User         @relation("InviteCreatedBy", fields: [createdById], references: [id], onDelete: Cascade)
 }
 
 model Property {
@@ -227,6 +262,11 @@ model Property {
   status           String       @default("active")
   distressedLabel  String       @default("standard")
   isBankAuction    Boolean      @default(false)
+  source           String?
+  sourceUrl        String?
+  sourceId         String?
+  listingHash      String?      @unique
+  isCrawled        Boolean      @default(false)
   imageUrls        String[]     @default([])
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
@@ -423,6 +463,8 @@ model EscrowAccount {
   releasedAt        DateTime?
   refundedAt        DateTime?
   frozenAt          DateTime?
+  pendingPayoutAt   DateTime?
+  payoutReference   String?
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
 
@@ -638,6 +680,112 @@ model FraudCase {
   resolvedById   String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+}
+
+model CrawlerRun {
+  id               String   @id @default(cuid())
+  source           String
+  startedAt        DateTime @default(now())
+  completedAt      DateTime?
+  listingsFound    Int      @default(0)
+  listingsImported Int      @default(0)
+  listingsSkipped  Int      @default(0)
+  listingsFailed   Int      @default(0)
+  errors           Json?
+  status           String   @default("RUNNING")
+  createdAt        DateTime @default(now())
+}
+
+model ApiKey {
+  id            String    @id @default(cuid())
+  name          String
+  keyHash       String    @unique
+  keyPrefix     String
+  userId        String
+  orgId         String?
+  plan          String    @default("FREE")
+  callsPerDay   Int       @default(100)
+  callsPerMonth Int       @default(1000)
+  totalCalls    Int       @default(0)
+  lastUsedAt    DateTime?
+  isActive      Boolean   @default(true)
+  expiresAt     DateTime?
+  createdAt     DateTime  @default(now())
+
+  user   User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  usages ApiUsage[]
+}
+
+model ApiUsage {
+  id             String   @id @default(cuid())
+  apiKeyId       String
+  endpoint       String
+  method         String
+  responseStatus Int
+  responseTimeMs Int
+  billedAmount   Int      @default(0)
+  createdAt      DateTime @default(now())
+
+  apiKey ApiKey @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
+}
+
+model BuilderProject {
+  id             String   @id @default(cuid())
+  title          String
+  description    String?
+  builderId      String
+  orgId          String?
+  city           String
+  locality       String?
+  reraProjectId  String
+  totalUnits     Int      @default(0)
+  phases         Json?
+  pricePerSqft   Float?
+  priceMin       Decimal? @db.Decimal(18, 2)
+  priceMax       Decimal? @db.Decimal(18, 2)
+  amenities      Json?
+  imageUrls      Json?
+  possessionDate DateTime?
+  status         String   @default("ACTIVE")
+  source         String   @default("MANUAL")
+  isCrawled      Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  builder  User           @relation("BuilderProjectOwner", fields: [builderId], references: [id], onDelete: Cascade)
+  units    ProjectUnit[]
+  bookings ProjectBooking[]
+}
+
+model ProjectUnit {
+  id         String   @id @default(cuid())
+  projectId  String
+  unitType   String
+  floor      Int?
+  unitNumber String
+  areaSqft   Float?
+  price      Decimal? @db.Decimal(18, 2)
+  status     String   @default("AVAILABLE")
+  createdAt  DateTime @default(now())
+
+  project  BuilderProject  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  bookings ProjectBooking[]
+}
+
+model ProjectBooking {
+  id          String   @id @default(cuid())
+  projectId   String
+  unitId      String
+  buyerId     String
+  amount      Decimal? @db.Decimal(18, 2)
+  status      String   @default("PENDING")
+  notes       String?
+  bookedAt    DateTime @default(now())
+  confirmedAt DateTime?
+
+  project BuilderProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  unit    ProjectUnit    @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  buyer   User           @relation("ProjectBookingBuyer", fields: [buyerId], references: [id], onDelete: Cascade)
 }
 
 model WhatsAppIngest {

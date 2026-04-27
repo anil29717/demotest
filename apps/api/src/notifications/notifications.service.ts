@@ -67,12 +67,17 @@ export class NotificationsService {
     }
   }
 
-  async listForUser(userId: string) {
-    return this.prisma.notification.findMany({
-      where: { userId },
-      orderBy: { createdAt: 'desc' },
-      take: 100,
-    });
+  async listForUser(userId: string, take = 20, offset = 0) {
+    const [data, total] = await Promise.all([
+      this.prisma.notification.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        take,
+        skip: offset,
+      }),
+      this.prisma.notification.count({ where: { userId } }),
+    ]);
+    return { data, total, hasMore: offset + data.length < total };
   }
 
   async markRead(userId: string, id: string) {

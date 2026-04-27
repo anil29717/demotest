@@ -38,6 +38,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { NavIcon } from "@/components/nav-icon";
 import { apiFetch } from "@/lib/api";
 import {
+  BUILDER_SIDEBAR_SECTIONS,
   BROKER_SIDEBAR_SECTIONS,
   BUYER_SIDEBAR_SECTIONS,
   HNI_SIDEBAR_SECTIONS,
@@ -57,6 +58,7 @@ const WORKSPACE_SIDEBAR_ROLES = new Set([
   "NRI",
   "BUYER",
   "HNI",
+  "BUILDER",
   "INSTITUTIONAL_BUYER",
   "INSTITUTIONAL_SELLER",
 ]);
@@ -73,6 +75,16 @@ type SidebarCounts = {
   chatUnread: number;
 };
 
+type SidebarCountsResponse = SidebarCounts;
+
+type OrgMembership = {
+  id: string;
+  name?: string;
+  organizationId?: string;
+  role?: string;
+  isActive?: boolean;
+};
+
 const EMPTY_COUNTS: SidebarCounts = {
   properties: 0,
   requirements: 0,
@@ -85,156 +97,127 @@ const EMPTY_COUNTS: SidebarCounts = {
   chatUnread: 0,
 };
 
-async function sumChatUnread(token: string): Promise<number> {
-  try {
-    const threads = await apiFetch<{ unreadCount?: number }[]>("/chat/threads", { token });
-    if (!Array.isArray(threads)) return 0;
-    return threads.reduce((sum, t) => sum + Number(t.unreadCount ?? 0), 0);
-  } catch {
-    return 0;
+const SIDEBAR_COUNTS_STALE_MS = 1000 * 60 * 3;
+const sidebarCountsCache = new Map<string, { counts: SidebarCounts; ts: number }>();
+
+function mergeCounts(base: SidebarCounts, next: Partial<SidebarCounts>): SidebarCounts {
+  return {
+    ...base,
+    ...next,
+  };
+}
+
+function cacheKey(token: string, role?: string | null) {
+  return `${token}:${role ?? "UNKNOWN"}`;
+}
+
+function runWhenIdle(task: () => void): () => void {
+  if (typeof window === "undefined") {
+    task();
+    return () => {};
   }
+  type IdleWindow = Window & {
+    requestIdleCallback?: (cb: () => void, opts?: { timeout?: number }) => number;
+    cancelIdleCallback?: (id: number) => void;
+  };
+  const idleWindow = window as IdleWindow;
+  if (typeof idleWindow.requestIdleCallback === "function") {
+    const id = idleWindow.requestIdleCallback(task, { timeout: 1200 });
+    return () => {
+      if (typeof idleWindow.cancelIdleCallback === "function") idleWindow.cancelIdleCallback(id);
+    };
+  }
+  const timeout = window.setTimeout(task, 220);
+  return () => window.clearTimeout(timeout);
 }
 
 function useSidebarCounts(token: string | null, role?: string | null): SidebarCounts {
   const [counts, setCounts] = useState<SidebarCounts>(EMPTY_COUNTS);
 
   useEffect(() => {
-    if (!token) return;
+    if (!token || !role) return;
     let cancelled = false;
+    let stopIdleTask = () => {};
 
-    const load = async () => {
+    const key = cacheKey(token, role);
+    const cached = sidebarCountsCache.get(key);
+    if (cached && Date.now() - cached.ts < SIDEBAR_COUNTS_STALE_MS) {
+      setCounts(cached.counts);
+    }
+
+    const loadCritical = async () => {
       try {
-        if (role === "NRI") {
-          const summary = await apiFetch<Record<string, unknown>>("/dashboard/summary", { token });
-          const quickStats =
-            typeof summary.quickStats === "object" && summary.quickStats
-              ? (summary.quickStats as Record<string, unknown>)
-              : {};
-          const next: SidebarCounts = {
-            ...EMPTY_COUNTS,
-            properties: Number(summary.myListings ?? quickStats.myProperties ?? 0),
-            requirements: Number(summary.myRequirements ?? quickStats.myRequirements ?? 0),
-            matches: Number(summary.matches ?? quickStats.myMatches ?? 0),
-          };
-          if (!cancelled) setCounts(next);
-          return;
-        }
-
-        if (role === "BUYER") {
-          const [summary, dealRows] = await Promise.all([
-            apiFetch<Record<string, unknown>>("/dashboard/summary", { token }),
-            apiFetch<unknown[]>("/deals", { token }).catch(() => []),
-          ]);
-          const quickStats =
-            typeof summary.quickStats === "object" && summary.quickStats
-              ? (summary.quickStats as Record<string, unknown>)
-              : {};
-          const next: SidebarCounts = {
-            ...EMPTY_COUNTS,
-            requirements: Number(summary.myRequirements ?? quickStats.myRequirements ?? 0),
-            matches: Number(summary.matches ?? quickStats.myMatches ?? 0),
-            deals: Array.isArray(dealRows) ? dealRows.length : 0,
-          };
-          next.chatUnread = await sumChatUnread(token);
-          if (!cancelled) setCounts(next);
-          return;
-        }
-
-        if (role === "HNI") {
-          const [summary, auctions] = await Promise.all([
-            apiFetch<Record<string, unknown>>("/dashboard/summary", { token }),
-            apiFetch<unknown[]>("/verticals/auctions", { token }).catch(() => []),
-          ]);
-          const quickStats =
-            typeof summary.quickStats === "object" && summary.quickStats
-              ? (summary.quickStats as Record<string, unknown>)
-              : {};
-          const next: SidebarCounts = {
-            ...EMPTY_COUNTS,
-            matches: Number(summary.matches ?? quickStats.myMatches ?? 0),
-            auctions: Array.isArray(auctions) ? auctions.length : 0,
-          };
-          if (!cancelled) setCounts(next);
-          return;
-        }
-
-        if (role === "INSTITUTIONAL_BUYER" || role === "INSTITUTIONAL_SELLER") {
-          const [summary, instRows, compliance] = await Promise.all([
-            apiFetch<Record<string, unknown>>("/dashboard/summary", { token }),
-            apiFetch<unknown[]>("/institutions", { token }).catch(() => []),
-            apiFetch<{ items?: { severity?: string }[] } | { severity?: string }[]>("/compliance/feed", {
-              token,
-            }).catch(() => []),
-          ]);
-          const complianceItems = Array.isArray(compliance)
-            ? compliance
-            : Array.isArray((compliance as { items?: unknown[] }).items)
-              ? (compliance as { items: { severity?: string }[] }).items
-              : [];
-          const quickStats =
-            typeof summary.quickStats === "object" && summary.quickStats
-              ? (summary.quickStats as Record<string, unknown>)
-              : {};
-          const next: SidebarCounts = {
-            ...EMPTY_COUNTS,
-            requirements: Number(summary.myRequirements ?? quickStats.myRequirements ?? 0),
-            matches: Number(summary.matches ?? quickStats.myMatches ?? 0),
-            institutions: Array.isArray(instRows) ? instRows.length : 0,
-            compliance: complianceItems.filter(
-              (item) => String(item.severity ?? "").toUpperCase() === "HIGH",
-            ).length,
-          };
-          if (!cancelled) setCounts(next);
-          return;
-        }
-
-        const [summary, leads, compliance] = await Promise.all([
-          apiFetch<Record<string, unknown>>("/dashboard/summary", { token }),
-          apiFetch<{ status?: string }[]>("/leads", { token }).catch(() => []),
-          apiFetch<{ items?: { severity?: string }[] } | { severity?: string }[]>("/compliance/feed", {
-            token,
-          }).catch(() => []),
-        ]);
-
-        const complianceItems = Array.isArray(compliance)
-          ? compliance
-          : Array.isArray(compliance.items)
-            ? compliance.items
-            : [];
-
-        const quickStats =
-          typeof summary.quickStats === "object" && summary.quickStats
-            ? (summary.quickStats as Record<string, unknown>)
-            : {};
-
-        const next: SidebarCounts = {
-          ...EMPTY_COUNTS,
-          properties: Number(summary.myListings ?? quickStats.myProperties ?? 0),
-          requirements: Number(summary.myRequirements ?? quickStats.myRequirements ?? 0),
-          matches: Number(summary.matches ?? quickStats.myMatches ?? 0),
-          deals: Number(
-            summary.deals ?? (summary as { recentMatches?: unknown[] }).recentMatches?.length ?? 0,
-          ),
-          hotLeads: leads.filter((lead) => String(lead.status ?? "").toUpperCase() === "HOT").length,
-          compliance: complianceItems.filter(
-            (item) => String(item.severity ?? "").toUpperCase() === "HIGH",
-          ).length,
-        };
-        if (role === "BROKER" || role === "SELLER" || role === "ADMIN") {
-          next.chatUnread = await sumChatUnread(token);
-        }
-        if (!cancelled) setCounts(next);
+        const critical = await apiFetch<SidebarCountsResponse>("/dashboard/sidebar-counts", { token });
+        if (cancelled) return;
+        const next = mergeCounts(EMPTY_COUNTS, critical ?? {});
+        setCounts(next);
+        sidebarCountsCache.set(key, { counts: next, ts: Date.now() });
       } catch {
         if (!cancelled) setCounts(EMPTY_COUNTS);
       }
     };
 
-    void load();
+    const loadNonCritical = async () => {
+      try {
+        const patch: Partial<SidebarCounts> = {};
+        const nonCritical = await apiFetch<SidebarCountsResponse>("/dashboard/sidebar-counts?includeNonCritical=true", {
+          token,
+        });
+        if (cancelled) return;
+        patch.hotLeads = Number(nonCritical?.hotLeads ?? 0);
+
+        if (role === "BROKER" || role === "SELLER" || role === "ADMIN" || role === "BUYER") {
+          const threads = await apiFetch<{ unreadCount?: number }[]>("/chat/threads", { token }).catch(() => []);
+          patch.chatUnread = Array.isArray(threads)
+            ? threads.reduce((sum, t) => sum + Number(t.unreadCount ?? 0), 0)
+            : 0;
+        }
+        if (role === "INSTITUTIONAL_BUYER" || role === "INSTITUTIONAL_SELLER" || role === "BROKER") {
+          const compliance = await apiFetch<{ items?: { severity?: string }[] } | { severity?: string }[]>(
+            "/compliance/feed",
+            { token },
+          ).catch(() => []);
+          const complianceItems = Array.isArray(compliance)
+            ? compliance
+            : Array.isArray((compliance as { items?: { severity?: string }[] }).items)
+              ? (compliance as { items: { severity?: string }[] }).items
+              : [];
+          patch.compliance = complianceItems.filter((item) => String(item.severity ?? "").toUpperCase() === "HIGH").length;
+        }
+        if (role === "HNI") {
+          const auctions = await apiFetch<unknown[]>("/verticals/auctions", { token }).catch(() => []);
+          patch.auctions = Array.isArray(auctions) ? auctions.length : 0;
+        }
+        if (role === "INSTITUTIONAL_BUYER" || role === "INSTITUTIONAL_SELLER") {
+          const instRows = await apiFetch<unknown[]>("/institutions", { token }).catch(() => []);
+          patch.institutions = Array.isArray(instRows) ? instRows.length : 0;
+        }
+        if (!cancelled) {
+          setCounts((prev) => {
+            const merged = mergeCounts(prev, patch);
+            sidebarCountsCache.set(key, { counts: merged, ts: Date.now() });
+            return merged;
+          });
+        }
+      } catch {
+        // Keep critical counts visible even if lazy fetches fail.
+      }
+    };
+
+    void loadCritical();
+    stopIdleTask = runWhenIdle(() => {
+      void loadNonCritical();
+    });
+
     const timer = setInterval(() => {
-      void load();
-    }, 60000);
+      void loadCritical();
+      stopIdleTask = runWhenIdle(() => {
+        void loadNonCritical();
+      });
+    }, 180000);
     return () => {
       cancelled = true;
+      stopIdleTask();
       clearInterval(timer);
     };
   }, [token, role]);
@@ -251,6 +234,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [onboardingComplete, setOnboardingComplete] = useState(true);
   const [organizationName, setOrganizationName] = useState<string>("Independent broker");
+  const [organizationId, setOrganizationId] = useState<string | null>(null);
+  const [orgMemberships, setOrgMemberships] = useState<OrgMembership[]>([]);
   const [nriCountry, setNriCountry] = useState<string | null>(null);
   const [hniTicketMin, setHniTicketMin] = useState<number | null>(null);
   const [hniTicketMax, setHniTicketMax] = useState<number | null>(null);
@@ -273,8 +258,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (process.env.NEXT_PUBLIC_PWA === "false") return;
     if (!("serviceWorker" in navigator)) return;
+    const isProd = process.env.NODE_ENV === "production";
+    const pwaEnabled = process.env.NEXT_PUBLIC_PWA !== "false";
+    if (!isProd || !pwaEnabled) {
+      // Avoid stale chunk issues during local development.
+      void navigator.serviceWorker.getRegistrations().then((regs) => {
+        regs.forEach((reg) => {
+          void reg.unregister();
+        });
+      });
+      return;
+    }
     void navigator.serviceWorker.register("/sw.js").catch(() => {});
   }, []);
 
@@ -288,12 +283,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     if (!token || !user?.role || !WORKSPACE_SIDEBAR_ROLES.has(user.role)) return;
     let cancelled = false;
     void Promise.all([
-      apiFetch<{ onboardingComplete?: boolean }>("/user/profile", { token }).catch(() => ({})),
-      apiFetch<{ name?: string }[]>("/organizations/mine", { token }).catch(() => []),
+      apiFetch<{ onboardingComplete?: boolean; onboardingStep?: string | null }>("/user/profile", { token }).catch(
+        () => ({}),
+      ),
+      apiFetch<OrgMembership[]>("/organizations/mine", { token }).catch(() => []),
     ]).then(([profile, orgs]) => {
       if (cancelled) return;
-      const p = profile as { onboardingComplete?: boolean };
-      setOnboardingComplete(Boolean(p.onboardingComplete));
+      const p = profile as { onboardingComplete?: boolean; onboardingStep?: string | null };
+      const isCompleteFromStep = String(p.onboardingStep ?? "").toLowerCase() === "complete";
+      const isComplete = typeof p.onboardingComplete === "boolean" ? p.onboardingComplete : isCompleteFromStep;
+      setOnboardingComplete(isComplete);
       const r = user?.role;
       const fallback =
         r === "SELLER"
@@ -307,12 +306,38 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 : r === "INSTITUTIONAL_BUYER" || r === "INSTITUTIONAL_SELLER"
                   ? "Organization"
                   : "Independent broker";
-      setOrganizationName(orgs[0]?.name?.trim() || fallback);
+      const resolvedOrgs = orgs ?? [];
+      setOrgMemberships(resolvedOrgs);
+      const active = resolvedOrgs.find((m) => m.isActive) ?? resolvedOrgs[0];
+      const activeName = active?.name?.trim() || fallback;
+      const activeId = active ? active.organizationId || active.id : null;
+      setOrganizationName(activeName);
+      setOrganizationId(activeId);
     });
     return () => {
       cancelled = true;
     };
   }, [token, user?.role]);
+
+  async function switchOrganization(nextOrgId: string) {
+    if (!token || !nextOrgId) return;
+    await apiFetch("/organizations/switch", {
+      method: "POST",
+      token,
+      body: JSON.stringify({ organizationId: nextOrgId }),
+    }).catch(() => null);
+    const next = orgMemberships.find((m) => (m.organizationId || m.id) === nextOrgId);
+    if (next) {
+      setOrganizationId(nextOrgId);
+      setOrganizationName(next.name?.trim() || organizationName);
+      setOrgMemberships((prev) =>
+        prev.map((m) => ({
+          ...m,
+          isActive: (m.organizationId || m.id) === nextOrgId,
+        })),
+      );
+    }
+  }
 
   useEffect(() => {
     if (!token || user?.role !== "HNI") return;
@@ -410,6 +435,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     const isNri = wr === "NRI";
     const isBuyer = wr === "BUYER";
     const isHni = wr === "HNI";
+    const isBuilder = wr === "BUILDER";
     const isInstBuyer = wr === "INSTITUTIONAL_BUYER";
     const isInstSeller = wr === "INSTITUTIONAL_SELLER";
     const isBroker = wr === "BROKER";
@@ -422,6 +448,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           ? BUYER_SIDEBAR_SECTIONS
           : isHni
             ? HNI_SIDEBAR_SECTIONS
+              : isBuilder
+                ? BUILDER_SIDEBAR_SECTIONS
             : isInstBuyer
               ? INSTITUTIONAL_BUYER_SIDEBAR_SECTIONS
               : isInstSeller
@@ -456,6 +484,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 dot: "bg-[#F0922B]",
                 label: "HNI",
               }
+            : isBuilder
+              ? {
+                  wrap: "border border-[#00C49A25] bg-[#00C49A0F]",
+                  text: "text-[#00C49A]",
+                  dot: "bg-[#00C49A]",
+                  label: "BUILDER",
+                }
             : isInstBuyer
               ? {
                   wrap: "border border-[#7F77DD30] bg-[#7F77DD10]",
@@ -490,6 +525,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           ? "text-[#378ADD]"
           : isHni
             ? "text-[#F0922B]"
+        : isBuilder
+          ? "text-[#00C49A]"
             : isInstBuyer
               ? "text-[#7F77DD]"
               : isInstSeller
@@ -504,6 +541,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           ? "Buyer"
           : isHni
             ? "HNI Investor"
+          : isBuilder
+            ? "Builder"
             : isInstBuyer
               ? "Inst. Buyer"
               : isInstSeller
@@ -512,11 +551,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
     const displayName =
       user?.name?.trim() ||
-      (isSeller ? "Seller User" : isNri ? "NRI User" : isBuyer ? "Buyer User" : isHni ? "HNI User" : isInstBuyer ? "Inst. Buyer" : isInstSeller ? "Inst. Seller" : "Broker User");
+      (isSeller ? "Seller User" : isNri ? "NRI User" : isBuyer ? "Buyer User" : isHni ? "HNI User" : isBuilder ? "Builder User" : isInstBuyer ? "Inst. Buyer" : isInstSeller ? "Inst. Seller" : "Broker User");
 
     const initialsSeed =
       user?.name?.trim() ||
-      (isSeller ? "Seller" : isNri ? "NRI" : isBuyer ? "Buyer" : isHni ? "HNI" : isInstBuyer ? "Inst Buyer" : isInstSeller ? "Inst Seller" : "Broker");
+      (isSeller ? "Seller" : isNri ? "NRI" : isBuyer ? "Buyer" : isHni ? "HNI" : isBuilder ? "Builder" : isInstBuyer ? "Inst Buyer" : isInstSeller ? "Inst Seller" : "Broker");
 
     return (
       <div className="flex h-screen overflow-hidden bg-[#0a0a0a] text-zinc-100">
@@ -557,6 +596,27 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               {isInstSeller ? <p className="mt-1 truncate text-[10px] text-[#444444]">{organizationName}</p> : null}
               {(isBroker || isSeller || isNri) ? (
                 <p className="mt-1 truncate text-[10px] text-[#444444]">{organizationName}</p>
+              ) : null}
+              {organizationId ? (
+                <p className="mt-1 truncate text-[10px] text-[#3f3f3f]">Org ID: {organizationId}</p>
+              ) : null}
+              {orgMemberships.length > 1 ? (
+                <select
+                  className="mt-2 w-full rounded border border-[#2a2a2a] bg-[#0b0b0b] px-2 py-1 text-[10px] text-[#a3a3a3]"
+                  value={organizationId ?? ""}
+                  onChange={(e) => {
+                    void switchOrganization(e.target.value);
+                  }}
+                >
+                  {orgMemberships.map((m) => {
+                    const oid = m.organizationId || m.id;
+                    return (
+                      <option key={oid} value={oid}>
+                        {(m.name || "Organization")} ({oid})
+                      </option>
+                    );
+                  })}
+                </select>
               ) : null}
             </div>
 

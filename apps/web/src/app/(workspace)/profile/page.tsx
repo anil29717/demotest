@@ -212,6 +212,9 @@ export default function ProfilePage() {
   const [activeTab, setActiveTab] = useState<TabId>("profile");
   const [isEditingBasic, setIsEditingBasic] = useState(false);
   const [isEditingCredentials, setIsEditingCredentials] = useState(false);
+  const [savingBasic, setSavingBasic] = useState(false);
+  const [savingCredentials, setSavingCredentials] = useState(false);
+  const [savingPrefs, setSavingPrefs] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [newCity, setNewCity] = useState("");
@@ -271,7 +274,16 @@ export default function ProfilePage() {
   const nriQuery = useQuery({
     queryKey: ["nri-profile", token],
     enabled: Boolean(token) && user?.role === "NRI",
-    queryFn: () => apiFetch<NriProfile>("/verticals/nri/profile", { token: token ?? undefined }).catch(() => null),
+    queryFn: async () => {
+      try {
+        const data = await apiFetch<NriProfile | null>("/verticals/nri/profile", {
+          token: token ?? undefined,
+        });
+        return data ?? null;
+      } catch {
+        return null;
+      }
+    },
   });
 
   const hniQuery = useQuery({
@@ -352,6 +364,7 @@ export default function ProfilePage() {
       return;
     }
     try {
+      setSavingBasic(true);
       await apiFetch("/user/profile", {
         method: "PUT",
         token,
@@ -367,12 +380,15 @@ export default function ProfilePage() {
       toast.success("Profile updated");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to update profile");
+    } finally {
+      setSavingBasic(false);
     }
   }
 
   async function saveCredentials() {
     if (!token) return;
     try {
+      setSavingCredentials(true);
       let apiSaved = false;
       if (role === "BROKER") {
         await apiFetch("/user/profile", {
@@ -425,12 +441,15 @@ export default function ProfilePage() {
       toast.success(apiSaved ? "Credentials updated" : "Saved on this device (no API fields for this role)");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to update credentials");
+    } finally {
+      setSavingCredentials(false);
     }
   }
 
   async function savePreferences() {
     if (!token) return;
     try {
+      setSavingPrefs(true);
       const { inAppAlerts, dealUpdates, ...apiPrefs } = notifDraft;
       void inAppAlerts;
       void dealUpdates;
@@ -443,6 +462,8 @@ export default function ProfilePage() {
       toast.success("Preferences saved");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to save preferences");
+    } finally {
+      setSavingPrefs(false);
     }
   }
 
@@ -516,27 +537,29 @@ export default function ProfilePage() {
                   Change photo · Coming soon
                 </button>
               </div>
-              <div className="space-y-2">
+              <div className="min-w-0 flex-1">
                 <p className="text-xl font-semibold text-white">{profile.name || "User"}</p>
-                <span className={`inline-flex rounded-full border px-2 py-1 text-xs ${roleBadge[role]}`}>{role}</span>
-                <p className="inline-flex items-center gap-1 text-xs text-[#888888]">
-                  <Mail className="h-3.5 w-3.5" />
-                  {profile.email || "Not set"}
-                </p>
-                <p className="inline-flex items-center gap-1 text-xs text-[#888888]">
-                  <Phone className="h-3.5 w-3.5" />
-                  {maskPhone(extras.whatsapp)}
-                </p>
-                <p className="inline-flex items-center gap-1 text-xs text-[#888888]">
-                  <Calendar className="h-3.5 w-3.5" />
-                  Member since {timeAgo(profile.createdAt)}
-                </p>
-                {orgName ? (
-                  <p className="inline-flex items-center gap-1 text-xs text-[#888888]">
-                    <Building2 className="h-3.5 w-3.5" />
-                    {orgName}
-                  </p>
-                ) : null}
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[#888888]">
+                  <span className={`inline-flex items-center rounded-full border px-2 py-1 text-xs ${roleBadge[role]}`}>{role}</span>
+                  <span className="inline-flex min-w-0 items-center gap-1">
+                    <Mail className="h-3.5 w-3.5 shrink-0" />
+                    <span className="truncate">{profile.email || "Not set"}</span>
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <Phone className="h-3.5 w-3.5 shrink-0" />
+                    <span>{maskPhone(extras.whatsapp)}</span>
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <Calendar className="h-3.5 w-3.5 shrink-0" />
+                    <span>Member since {timeAgo(profile.createdAt)}</span>
+                  </span>
+                  {orgName ? (
+                    <span className="inline-flex min-w-0 items-center gap-1">
+                      <Building2 className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">{orgName}</span>
+                    </span>
+                  ) : null}
+                </div>
               </div>
             </div>
           </section>
@@ -608,8 +631,8 @@ export default function ProfilePage() {
             </div>
             {isEditingBasic ? (
               <div className="mt-4 flex items-center gap-2">
-                <button type="button" onClick={() => void saveBasicInfo()} className="rounded-lg bg-[#00C49A] px-5 py-2 text-sm font-semibold text-black hover:bg-[#00A882]">
-                  Save changes
+                <button type="button" disabled={savingBasic} onClick={() => void saveBasicInfo()} className="rounded-lg bg-[#00C49A] px-5 py-2 text-sm font-semibold text-black hover:bg-[#00A882] disabled:opacity-60">
+                  {savingBasic ? "Saving..." : "Save changes"}
                 </button>
                 <button type="button" onClick={() => setIsEditingBasic(false)} className="rounded-lg border border-[#2a2a2a] px-5 py-2 text-sm text-[#888]">
                   Cancel
@@ -1212,8 +1235,8 @@ export default function ProfilePage() {
           {role === "ADMIN" ? <p className="text-sm text-[#888]">Admin credentials are managed by the system.</p> : null}
           {role !== "ADMIN" && isEditingCredentials ? (
             <div className="mt-4">
-              <button type="button" onClick={() => void saveCredentials()} className="rounded-lg bg-[#00C49A] px-5 py-2 text-sm font-semibold text-black">
-                Save credentials
+              <button type="button" disabled={savingCredentials} onClick={() => void saveCredentials()} className="rounded-lg bg-[#00C49A] px-5 py-2 text-sm font-semibold text-black disabled:opacity-60">
+                {savingCredentials ? "Saving..." : "Save credentials"}
               </button>
             </div>
           ) : null}
@@ -1335,8 +1358,8 @@ export default function ProfilePage() {
                 />
               </label>
             </div>
-            <button type="button" onClick={() => void savePreferences()} className="mt-4 rounded-lg bg-[#00C49A] px-5 py-2 text-sm font-semibold text-black">
-              Save preferences
+            <button type="button" disabled={savingPrefs} onClick={() => void savePreferences()} className="mt-4 rounded-lg bg-[#00C49A] px-5 py-2 text-sm font-semibold text-black disabled:opacity-60">
+              {savingPrefs ? "Saving..." : "Save preferences"}
             </button>
           </section>
 

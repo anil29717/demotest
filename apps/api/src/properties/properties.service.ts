@@ -9,6 +9,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { MatchingService } from '../matching/matching.service';
 import { FraudService } from '../fraud/fraud.service';
+import { OcrService } from '../fraud/ocr.service';
 import { PropertySearchIndexService } from '../search/property-search-index.service';
 import { SearchService } from '../search/search.service';
 import { ContactPolicyService } from '../contact-policy/contact-policy.service';
@@ -28,6 +29,7 @@ export class PropertiesService {
     private readonly audit: AuditService,
     private readonly matching: MatchingService,
     private readonly fraud: FraudService,
+    private readonly ocrService: OcrService,
     private readonly propertySearchIndex: PropertySearchIndexService,
     private readonly searchService: SearchService,
     private readonly contactPolicy: ContactPolicyService,
@@ -150,6 +152,17 @@ export class PropertiesService {
     }
 
     void this.searchService.notifyInstantSavedSearchMatches(row.id);
+    if (row.imageUrls?.length) {
+      setImmediate(() => {
+        this.ocrService
+          .scanPropertyImages(row.id, row.imageUrls)
+          .catch((err) =>
+            this.logger.warn(
+              `OCR scan failed for property ${row.id}: ${err instanceof Error ? err.message : String(err)}`,
+            ),
+          );
+      });
+    }
 
     const listingRisk = await this.fraud.duplicateListingRisk(row.id);
     return { ...this.toPublic(row), listingRisk };
@@ -248,6 +261,15 @@ export class PropertiesService {
       take: 100,
     });
     return rows.map((r) => this.toPublic(r));
+  }
+
+  async checkHash(hash?: string) {
+    if (!hash) return { exists: false };
+    const row = await this.prisma.property.findFirst({
+      where: { listingHash: hash },
+      select: { id: true },
+    });
+    return { exists: Boolean(row) };
   }
 
   async getPublic(id: string) {

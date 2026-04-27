@@ -76,6 +76,11 @@ export class EscrowService {
     if (existing?.status === EscrowStatus.HELD) {
       throw new BadRequestException('Escrow is already held for this deal');
     }
+    if (existing?.status === EscrowStatus.PENDING_PAYOUT) {
+      throw new BadRequestException(
+        'Escrow payout is pending admin confirmation',
+      );
+    }
     if (
       existing &&
       existing.status !== EscrowStatus.INITIATED
@@ -208,32 +213,128 @@ export class EscrowService {
     });
     if (!escrow) throw new NotFoundException('No escrow for this deal');
     if (escrow.status !== EscrowStatus.HELD) {
-      throw new BadRequestException('Escrow must be HELD to release');
+      throw new BadRequestException('Escrow must be HELD to request release');
     }
 
     const now = new Date();
-    this.logger.log(
-      `[Escrow ${escrow.id}] Production payout to seller ${escrow.beneficiaryId} would run here (Razorpay transfer/payout).`,
-    );
+    const updated = await this.prisma.escrowAccount.update({
+      where: { id: escrow.id },
+      data: {
+        status: EscrowStatus.PENDING_PAYOUT,
+        pendingPayoutAt: now,
+        payoutReference: null,
+      },
+    });
 
+    await this.notifyAdminsEscrowPayoutPending(dealId, escrow.amountPaise);
+
+    try {
+      const rupees = escrow.amountPaise / 100;
+      const formatted = new Intl.NumberFormat('en-IN').format(rupees);
+      await this.chat.createSystemMessageForDeal(
+        dealId,
+        `Seller payout requested — transfer ₹${formatted} manually, then admin confirms reference.`,
+      );
+    } catch {
+      // non-blocking
+    }
+
+    return { ok: true, status: updated.status };
+  }
+
+  /** Admin confirms manual bank/Razorpay payout after broker requested release (Option B). */
+  async confirmManualPayout(
+    dealId: string,
+    adminUserId: string,
+    payoutReference: string,
+  ) {
+    const admin = await this.prisma.user.findUnique({
+      where: { id: adminUserId },
+      select: { role: true },
+    });
+    if (admin?.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('Admin only');
+    }
+    const ref = payoutReference.trim();
+    if (!ref) throw new BadRequestException('payoutReference required');
+
+    const escrow = await this.prisma.escrowAccount.findUnique({
+      where: { dealId },
+    });
+    if (!escrow) throw new NotFoundException('No escrow for this deal');
+    if (escrow.status !== EscrowStatus.PENDING_PAYOUT) {
+      throw new BadRequestException(
+        'Escrow must be PENDING_PAYOUT to confirm payout',
+      );
+    }
+
+    const now = new Date();
     await this.prisma.$transaction([
       this.prisma.escrowAccount.update({
         where: { id: escrow.id },
-        data: { status: EscrowStatus.RELEASED, releasedAt: now },
+        data: {
+          status: EscrowStatus.RELEASED,
+          releasedAt: now,
+          payoutReference: ref,
+        },
       }),
       this.prisma.escrowTransaction.create({
         data: {
           escrowAccountId: escrow.id,
           type: EscrowTransactionType.RELEASE,
           amountPaise: escrow.amountPaise,
-          fromUserId: releasedByUserId,
+          fromUserId: adminUserId,
           toUserId: escrow.beneficiaryId,
-          notes: 'Released to seller (simulated payout)',
+          notes: `Manual payout confirmed · ref: ${ref}`,
         },
       }),
     ]);
 
     return { ok: true, status: EscrowStatus.RELEASED };
+  }
+
+  async listEscrowsForAdmin(opts?: { status?: EscrowStatus }) {
+    return this.prisma.escrowAccount.findMany({
+      where: opts?.status ? { status: opts.status } : undefined,
+      orderBy: { updatedAt: 'desc' },
+      take: 200,
+      include: {
+        deal: {
+          select: {
+            id: true,
+            stage: true,
+            requirement: {
+              select: { userId: true, city: true },
+            },
+          },
+        },
+        holder: { select: { id: true, name: true } },
+        beneficiary: { select: { id: true, name: true } },
+      },
+    });
+  }
+
+  private async notifyAdminsEscrowPayoutPending(
+    dealId: string,
+    amountPaise: number,
+  ) {
+    const admins = await this.prisma.user.findMany({
+      where: { role: UserRole.ADMIN },
+      select: { id: true },
+    });
+    const rupees = amountPaise / 100;
+    const formatted = new Intl.NumberFormat('en-IN').format(rupees);
+    const short = dealId.slice(0, 8);
+    for (const a of admins) {
+      await this.prisma.notification.create({
+        data: {
+          userId: a.id,
+          channel: 'in_app',
+          title: 'Escrow payout required',
+          body: `Deal ${short}… — pay seller ₹${formatted} outside the app, then confirm reference under Admin → Escrow.`,
+        },
+      });
+    }
   }
 
   async refundEscrow(dealId: string, reason: string) {
@@ -325,6 +426,8 @@ export class EscrowService {
         releasedAt: escrow.releasedAt,
         refundedAt: escrow.refundedAt,
         frozenAt: escrow.frozenAt,
+        pendingPayoutAt: escrow.pendingPayoutAt,
+        payoutReference: escrow.payoutReference,
         holderId: escrow.holderId,
         beneficiaryId: escrow.beneficiaryId,
       },

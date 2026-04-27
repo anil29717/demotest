@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/auth-context";
 import { apiFetch, apiUrl } from "@/lib/api";
+import { timeAgo } from "@/lib/format";
 
 type Metrics = {
   webhooksReceived: number;
@@ -63,13 +64,14 @@ export default function AdminWhatsappPage() {
   const [testTo, setTestTo] = useState("");
   const [testBody, setTestBody] = useState("AR Buildwel admin test");
   const [msg, setMsg] = useState<string | null>(null);
+  const [take, setTake] = useState(20);
 
   async function load() {
     if (!token) return;
     const [m, n, rows] = await Promise.all([
       apiFetch<Metrics>("/admin/whatsapp/metrics", { token }),
       apiFetch<NlpStats>("/admin/whatsapp/nlp-stats", { token }),
-      apiFetch<IngestRow[]>("/admin/whatsapp/ingests?take=25", { token }),
+      apiFetch<IngestRow[]>(`/admin/whatsapp/ingests?take=${take}`, { token }),
     ]);
     setMetrics(m);
     setNlp(n);
@@ -94,7 +96,7 @@ export default function AdminWhatsappPage() {
   useEffect(() => {
     if (token && role === "ADMIN") void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- load is stable for mount refresh
-  }, [token, role]);
+  }, [token, role, take]);
 
   if (!token)
     return (
@@ -121,23 +123,29 @@ export default function AdminWhatsappPage() {
       >
         Refresh
       </button>
-      {metrics && (
-        <dl className="mt-6 grid grid-cols-2 gap-2 rounded border border-zinc-800 bg-zinc-900/40 p-4 text-xs">
-          <dt className="text-zinc-500">Received</dt>
-          <dd>{metrics.webhooksReceived}</dd>
-          <dt className="text-zinc-500">Deduped</dt>
-          <dd>{metrics.webhooksDeduped}</dd>
-          <dt className="text-zinc-500">Signature rejected</dt>
-          <dd>{metrics.signatureRejected}</dd>
-          <dt className="text-zinc-500">Leads from WA (legacy)</dt>
-          <dd>{metrics.leadsCreatedFromWa}</dd>
-          <dt className="text-zinc-500">Avg latency (ms, last 100)</dt>
-          <dd>{metrics.avgProcessLatencyMsLast100}</dd>
-        </dl>
+      {metrics && nlp && (
+        <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded border border-zinc-800 bg-zinc-900/40 p-3">
+            <p className="text-xs text-zinc-500">Total ingested</p>
+            <p className="mt-1 text-xl text-zinc-100">{nlp.totalMessages.toLocaleString()}</p>
+          </div>
+          <div className="rounded border border-zinc-800 bg-zinc-900/40 p-3">
+            <p className="text-xs text-zinc-500">NLP classified</p>
+            <p className="mt-1 text-xl text-zinc-100">{nlp.nlpClassified.toLocaleString()}</p>
+          </div>
+          <div className="rounded border border-zinc-800 bg-zinc-900/40 p-3">
+            <p className="text-xs text-zinc-500">Routing success</p>
+            <p className="mt-1 text-xl text-teal-300">{nlp.routingRouted.toLocaleString()}</p>
+          </div>
+          <div className="rounded border border-zinc-800 bg-zinc-900/40 p-3">
+            <p className="text-xs text-zinc-500">Avg confidence</p>
+            <p className="mt-1 text-xl text-zinc-100">{(nlp.avgConfidence * 100).toFixed(1)}%</p>
+          </div>
+        </div>
       )}
       {nlp && (
         <section className="mt-8 rounded border border-zinc-800 bg-zinc-900/30 p-4">
-          <h2 className="text-sm font-medium text-zinc-200">NLP & routing</h2>
+          <h2 className="text-sm font-medium text-zinc-200">Intent distribution</h2>
           <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-zinc-400">
             <dt>Total ingests</dt>
             <dd className="text-zinc-200">{nlp.totalMessages}</dd>
@@ -152,10 +160,14 @@ export default function AdminWhatsappPage() {
             <dt>Routing success rate</dt>
             <dd className="text-zinc-200">{(nlp.routingSuccessRate * 100).toFixed(1)}%</dd>
           </dl>
-          <p className="mt-3 text-xs font-medium text-zinc-500">By intent</p>
-          <ul className="mt-1 flex flex-wrap gap-2 text-xs">
+          <ul className="mt-3 flex flex-wrap gap-2 text-xs">
             {nlp.intentBreakdown.map((i) => (
-              <li key={i.intent ?? "null"} className="rounded border border-zinc-800 px-2 py-1 text-zinc-400">
+              <li
+                key={i.intent ?? "null"}
+                className={`rounded border border-zinc-800 px-2 py-1 ${
+                  INTENT_BADGE[i.intent ?? "UNKNOWN"] ?? "bg-zinc-800 text-zinc-300"
+                }`}
+              >
                 {i.intent ?? "—"}: <span className="text-zinc-200">{i.count}</span>
               </li>
             ))}
@@ -192,7 +204,7 @@ export default function AdminWhatsappPage() {
           return (
             <li key={r.id} className="rounded border border-zinc-800/80 bg-zinc-950/40 p-3">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-zinc-500">{new Date(r.createdAt).toLocaleString()}</span>
+                <span className="text-zinc-500">{timeAgo(r.createdAt)}</span>
                 <span className="text-zinc-300">{r.messageType ?? "?"}</span>
                 {r.nlpIntent ? (
                   <span className={`rounded px-2 py-0.5 font-medium ${badge}`}>{r.nlpIntent}</span>
@@ -231,6 +243,15 @@ export default function AdminWhatsappPage() {
           );
         })}
       </ul>
+      <div className="mt-3">
+        <button
+          type="button"
+          onClick={() => setTake((t) => t + 20)}
+          className="rounded border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-900"
+        >
+          Load more
+        </button>
+      </div>
     </div>
   );
 }

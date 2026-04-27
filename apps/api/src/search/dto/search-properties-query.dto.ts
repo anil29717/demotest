@@ -65,6 +65,28 @@ export class SearchPropertiesQueryDto {
   distressedLabel?: string;
 
   @IsOptional()
+  @Transform(({ value }) =>
+    value === undefined || value === null || value === '' ? undefined : Number(value),
+  )
+  @IsNumber()
+  lat?: number;
+
+  @IsOptional()
+  @Transform(({ value }) =>
+    value === undefined || value === null || value === '' ? undefined : Number(value),
+  )
+  @IsNumber()
+  lon?: number;
+
+  @IsOptional()
+  @Transform(({ value }) =>
+    value === undefined || value === null || value === '' ? undefined : Number(value),
+  )
+  @IsNumber()
+  @Min(1)
+  radiusKm?: number;
+
+  @IsOptional()
   @IsNumber()
   @Min(1)
   page?: number;

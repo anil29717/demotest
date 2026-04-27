@@ -38,7 +38,19 @@ type FiltersState = {
   maxAreaSqft: string;
   isBankAuction: BankAuctionOpt;
   distressedLabel: string;
+  lat: string;
+  lon: string;
+  radiusKm: string;
 };
+
+type FacetBucket = { key: string; count: number };
+type FacetsPayload = {
+  types: FacetBucket[];
+  dealTypes: FacetBucket[];
+  cities: FacetBucket[];
+  priceRange: { min: number; max: number; avg: number };
+  priceHistogram: Array<{ key: number; doc_count: number }>;
+} | null;
 
 const emptyFilters = (): FiltersState => ({
   q: "",
@@ -51,6 +63,9 @@ const emptyFilters = (): FiltersState => ({
   maxAreaSqft: "",
   isBankAuction: "",
   distressedLabel: "",
+  lat: "",
+  lon: "",
+  radiusKm: "",
 });
 
 function filtersToSearchParams(f: FiltersState): URLSearchParams {
@@ -71,6 +86,9 @@ function filtersToSearchParams(f: FiltersState): URLSearchParams {
     p.set("isBankAuction", f.isBankAuction);
   }
   if (f.distressedLabel.trim()) p.set("distressedLabel", f.distressedLabel.trim());
+  if (f.lat.trim() && Number.isFinite(Number(f.lat))) p.set("lat", String(Number(f.lat)));
+  if (f.lon.trim() && Number.isFinite(Number(f.lon))) p.set("lon", String(Number(f.lon)));
+  if (f.radiusKm.trim() && Number.isFinite(Number(f.radiusKm))) p.set("radiusKm", String(Number(f.radiusKm)));
   return p;
 }
 
@@ -142,6 +160,9 @@ export default function SearchPage() {
   const [total, setTotal] = useState<number | null>(null);
   const [tookMs, setTookMs] = useState<number | null>(null);
   const [searchFallback, setSearchFallback] = useState(false);
+  const [facets, setFacets] = useState<FacetsPayload>(null);
+  const [activeFacetType, setActiveFacetType] = useState("");
+  const [activeFacetCity, setActiveFacetCity] = useState("");
   const [kwSuggestions, setKwSuggestions] = useState<string[]>([]);
   const { refetch: refreshSaved } = useQuery({
     queryKey: ["saved-searches", token],
@@ -186,16 +207,19 @@ export default function SearchPage() {
       hits?: Hit[];
       total?: number;
       tookMs?: number;
+      took?: number | null;
       note?: string;
       fallback?: boolean;
+      facets?: FacetsPayload;
     }>(path);
     setHits(data.hits ?? []);
     setNote(data.note ?? "");
     setTotal(typeof data.total === "number" ? data.total : null);
-    setTookMs(typeof data.tookMs === "number" ? data.tookMs : null);
+    setTookMs(typeof data.took === "number" ? data.took : typeof data.tookMs === "number" ? data.tookMs : null);
     setSearchFallback(
       Boolean(data.fallback) || String(headers.get("X-Search-Fallback") ?? "").toLowerCase() === "true",
     );
+    setFacets(data.facets ?? null);
     setPage(pnum);
   }
 
@@ -290,7 +314,22 @@ export default function SearchPage() {
       isBankAuction:
         o.isBankAuction === true ? "true" : o.isBankAuction === false ? "false" : "",
       distressedLabel: typeof o.distressedLabel === "string" ? o.distressedLabel : "",
+      lat: o.lat != null ? String(o.lat) : "",
+      lon: o.lon != null ? String(o.lon) : "",
+      radiusKm: o.radiusKm != null ? String(o.radiusKm) : "",
     });
+  }
+
+  function toggleFacetType(value: string) {
+    const next = activeFacetType === value ? "" : value;
+    setActiveFacetType(next);
+    setF((prev) => ({ ...prev, propertyType: (next as PropertyTypeOpt) || "" }));
+  }
+
+  function toggleFacetCity(value: string) {
+    const next = activeFacetCity === value ? "" : value;
+    setActiveFacetCity(next);
+    setF((prev) => ({ ...prev, city: next }));
   }
 
   return (
@@ -449,6 +488,36 @@ export default function SearchPage() {
               </select>
             </div>
           ) : null}
+          <div>
+            <label className="text-xs font-medium text-zinc-500">Latitude</label>
+            <input
+              type="number"
+              step="any"
+              className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
+              value={f.lat}
+              onChange={(e) => setF((s) => ({ ...s, lat: e.target.value }))}
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-zinc-500">Longitude</label>
+            <input
+              type="number"
+              step="any"
+              className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
+              value={f.lon}
+              onChange={(e) => setF((s) => ({ ...s, lon: e.target.value }))}
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-zinc-500">Radius km (optional)</label>
+            <input
+              type="number"
+              min={1}
+              className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
+              value={f.radiusKm}
+              onChange={(e) => setF((s) => ({ ...s, radiusKm: e.target.value }))}
+            />
+          </div>
         </div>
         {user?.role === "NRI" ? (
           <label className="flex cursor-pointer items-center gap-3 rounded border border-zinc-700 bg-zinc-900/80 px-3 py-2">
@@ -496,9 +565,9 @@ export default function SearchPage() {
 
       {(note || tookMs != null || total != null) && (
         <p className="mt-3 text-xs text-zinc-500">
-          {total != null ? <>{total.toLocaleString()} results</> : null}
-          {total != null && tookMs != null ? " · " : null}
-          {tookMs != null ? <>{tookMs} ms</> : null}
+          {total != null ? <>{total.toLocaleString()} properties found</> : null}
+          {f.lat && f.lon && f.city.trim() ? <> · near {f.city.trim()}</> : null}
+          {process.env.NODE_ENV === "development" && tookMs != null ? <> · ES: {tookMs}ms</> : null}
           {(total != null || tookMs != null) && note ? " · " : null}
           {note}
         </p>
@@ -509,22 +578,123 @@ export default function SearchPage() {
           <span className="font-mono text-amber-100/90">X-Search-Fallback</span>).
         </p>
       ) : null}
-      <ul className="mt-6 space-y-2 text-sm">
-        {displayHits.map((h) => (
-          <li key={h.id}>
-            <Link href={`/properties/${h.id}`} className="text-teal-400 hover:underline">
-              {h.title}
-            </Link>
-            <span className="text-zinc-500">
-              {" "}
-              · {h.city} · {formatINR(Number(h.price ?? 0))} · {h.areaSqft} sqft
-              {sort === "relevance" && typeof h._score === "number" ? (
-                <span className="text-zinc-600"> · score {h._score.toFixed(2)}</span>
-              ) : null}
-            </span>
-          </li>
-        ))}
-      </ul>
+      {(activeFacetType || activeFacetCity) && (
+        <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
+          {activeFacetType ? (
+            <button
+              type="button"
+              onClick={() => {
+                toggleFacetType(activeFacetType);
+                void runSearch(1);
+              }}
+              className="rounded-full border border-[#00C49A40] bg-[#00C49A15] px-2 py-1 text-[#00C49A]"
+            >
+              Type: {activeFacetType} ×
+            </button>
+          ) : null}
+          {activeFacetCity ? (
+            <button
+              type="button"
+              onClick={() => {
+                toggleFacetCity(activeFacetCity);
+                void runSearch(1);
+              }}
+              className="rounded-full border border-[#00C49A40] bg-[#00C49A15] px-2 py-1 text-[#00C49A]"
+            >
+              City: {activeFacetCity} ×
+            </button>
+          ) : null}
+          {activeFacetType && activeFacetCity ? (
+            <button
+              type="button"
+              onClick={() => {
+                setActiveFacetType("");
+                setActiveFacetCity("");
+                setF((s) => ({ ...s, propertyType: "", city: "" }));
+                void runSearch(1);
+              }}
+              className="text-zinc-500 underline"
+            >
+              Clear all filters
+            </button>
+          ) : null}
+        </div>
+      )}
+
+      <div className={`mt-6 ${facets ? "grid gap-5 lg:grid-cols-[240px,1fr]" : ""}`}>
+        {facets ? (
+          <aside className="space-y-5 rounded-lg border border-zinc-800 bg-zinc-900/40 p-3">
+            <section>
+              <p className="text-[11px] uppercase tracking-wide text-[#555]">Property type</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {facets.types.map((item) => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={() => {
+                      toggleFacetType(item.key);
+                      void runSearch(1);
+                    }}
+                    className={`rounded-full border px-2 py-1 text-xs ${
+                      activeFacetType === item.key
+                        ? "border-[#00C49A40] bg-[#00C49A15] text-[#00C49A]"
+                        : "border-zinc-700 bg-zinc-900 text-zinc-300"
+                    }`}
+                  >
+                    {item.key} ({item.count})
+                  </button>
+                ))}
+              </div>
+            </section>
+            <section>
+              <p className="text-[11px] uppercase tracking-wide text-[#555]">City</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {facets.cities.slice(0, 5).map((item) => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={() => {
+                      toggleFacetCity(item.key);
+                      void runSearch(1);
+                    }}
+                    className={`rounded-full border px-2 py-1 text-xs ${
+                      activeFacetCity === item.key
+                        ? "border-[#00C49A40] bg-[#00C49A15] text-[#00C49A]"
+                        : "border-zinc-700 bg-zinc-900 text-zinc-300"
+                    }`}
+                  >
+                    {item.key} ({item.count})
+                  </button>
+                ))}
+              </div>
+            </section>
+            <section>
+              <p className="text-[11px] uppercase tracking-wide text-[#555]">Price range</p>
+              <p className="mt-2 text-sm text-zinc-300">
+                {formatINR(Number(facets.priceRange.min ?? 0))} - {formatINR(Number(facets.priceRange.max ?? 0))}
+              </p>
+              <p className="text-[11px] text-zinc-500">(based on current results)</p>
+            </section>
+          </aside>
+        ) : null}
+
+        <ul className="space-y-2 text-sm">
+          {displayHits.map((h) => (
+            <li key={h.id}>
+              <Link href={`/properties/${h.id}`} className="text-teal-400 hover:underline">
+                {h.title}
+              </Link>
+              <span className="text-zinc-500">
+                {" "}
+                · {h.city} · {formatINR(Number(h.price ?? 0))} · {h.areaSqft} sqft
+                {sort === "relevance" && typeof h._score === "number" ? (
+                  <span className="text-zinc-600"> · score {h._score.toFixed(2)}</span>
+                ) : null}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
 
       {total != null && total > PAGE_LIMIT ? (
         <div className="mt-4 flex items-center justify-between gap-4 border-t border-zinc-800 pt-4 text-sm text-zinc-400">

@@ -17,6 +17,16 @@ import { ChatGateway } from './chat.gateway';
 
 const SYSTEM_SENDER = 'system';
 
+function initialsFromLabel(name: string): string {
+  const n = name.trim();
+  if (!n) return '?';
+  const parts = n.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return `${parts[0]![0] ?? ''}${parts[parts.length - 1]![0] ?? ''}`.toUpperCase();
+  }
+  return n.slice(0, 2).toUpperCase();
+}
+
 @Injectable()
 export class ChatService {
   private readonly logger = new Logger(ChatService.name);
@@ -27,6 +37,43 @@ export class ChatService {
     @Inject(forwardRef(() => ChatGateway))
     private readonly gateway: ChatGateway,
   ) {}
+
+  async isUserOnline(userId: string): Promise<boolean> {
+    return this.gateway.isUserOnline(userId);
+  }
+
+  async getThreadSummary(threadId: string, userId: string) {
+    const thread = await this.prisma.chatThread.findUnique({
+      where: { id: threadId },
+    });
+    if (!thread) throw new NotFoundException('Thread not found');
+    this.assertParticipant(thread, userId);
+
+    const ids = thread.participants.filter((p) => p !== SYSTEM_SENDER);
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, name: true, role: true },
+    });
+    const byId = new Map(users.map((u) => [u.id, u]));
+    const participants = ids.map((id) => {
+      const u = byId.get(id);
+      return {
+        id,
+        name: u?.name ?? id.slice(0, 8),
+        role: u?.role ?? 'USER',
+      };
+    });
+
+    return {
+      thread: {
+        id: thread.id,
+        title: thread.title,
+        dealId: thread.dealId,
+        threadType: thread.threadType,
+      },
+      participants,
+    };
+  }
 
   private serializeMessage(m: {
     id: string;
@@ -261,9 +308,13 @@ export class ChatService {
     const hasMore = rows.length > limit;
     const page = hasMore ? rows.slice(0, limit) : rows;
     const ordered = [...page].reverse();
+    const data = ordered.map((m) => this.serializeMessage(m));
+    const nextCursor = hasMore ? page[limit - 1]?.id : undefined;
     return {
-      messages: ordered.map((m) => this.serializeMessage(m)),
-      nextCursor: hasMore ? page[limit - 1]?.id : undefined,
+      data,
+      messages: data,
+      hasMore,
+      nextCursor,
     };
   }
 
@@ -410,6 +461,11 @@ export class ChatService {
           ? nameById.get(others[0]) || others[0]
           : others.map((o) => nameById.get(o) || o).join(', '));
 
+      const previewOthers = others.slice(0, 3).map((oid) => ({
+        id: oid,
+        initials: initialsFromLabel(nameById.get(oid) || oid),
+      }));
+
       out.push({
         id: t.id,
         dealId: t.dealId,
@@ -420,6 +476,7 @@ export class ChatService {
         unreadCount: unread,
         propertyId: t.deal?.property?.id ?? null,
         dealIdForLink: t.deal?.id ?? null,
+        participantPreview: previewOthers,
       });
     }
     return out;

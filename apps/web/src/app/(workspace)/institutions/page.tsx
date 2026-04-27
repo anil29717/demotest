@@ -2,7 +2,7 @@
 
 import { Landmark, Lock, MapPin, ShieldCheck, TrendingUp } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
@@ -40,22 +40,30 @@ export default function InstitutionsPage() {
   });
   void queryClient;
 
-  useEffect(() => {
-    if (user?.role === "INSTITUTIONAL_BUYER") setTab("all");
-    if (user?.role === "INSTITUTIONAL_SELLER") setTab("mine");
-  }, [user?.role]);
+  const activeTab = useMemo(() => {
+    const role = user?.role;
+    if (role === "INSTITUTIONAL_SELLER") {
+      if (tab === "mine" || tab === "browse") return tab;
+      return "mine";
+    }
+    if (role === "INSTITUTIONAL_BUYER") {
+      if (tab === "all" || tab === "nda" || tab === "approved") return tab;
+      return "all";
+    }
+    return tab;
+  }, [user?.role, tab]);
 
   const filtered = useMemo(() => {
     let r = rows;
     if (user?.role === "INSTITUTIONAL_BUYER") {
-      if (tab === "nda") r = r.filter((i) => i.locked !== false);
-      if (tab === "approved") r = r.filter((i) => i.locked === false);
+      if (activeTab === "nda") r = r.filter((i) => i.locked !== false);
+      if (activeTab === "approved") r = r.filter((i) => i.locked === false);
     }
     if (filterTx !== "ALL") {
       r = r.filter((i) => String(i.transactionType ?? "").toUpperCase() === filterTx);
     }
     return r;
-  }, [rows, tab, filterTx, user?.role]);
+  }, [rows, activeTab, filterTx, user?.role]);
 
   const isInstBuyer = user?.role === "INSTITUTIONAL_BUYER";
   const isInstSeller = user?.role === "INSTITUTIONAL_SELLER";
@@ -111,7 +119,7 @@ export default function InstitutionsPage() {
               type="button"
               onClick={() => setTab(t.id)}
               className={`rounded-full border px-3 py-1.5 text-xs font-medium ${
-                tab === t.id ? "border-[#7F77DD] bg-[#7F77DD15] text-[#7F77DD]" : "border-[#1a1a1a] text-[#888888]"
+                activeTab === t.id ? "border-[#7F77DD] bg-[#7F77DD15] text-[#7F77DD]" : "border-[#1a1a1a] text-[#888888]"
               }`}
             >
               {t.label}
@@ -133,7 +141,7 @@ export default function InstitutionsPage() {
               type="button"
               onClick={() => setTab(t.id)}
               className={`rounded-full border px-3 py-1.5 text-xs font-medium ${
-                tab === t.id ? "border-[#5BAD8F] bg-[#5BAD8F15] text-[#5BAD8F]" : "border-[#1a1a1a] text-[#888888]"
+                activeTab === t.id ? "border-[#5BAD8F] bg-[#5BAD8F15] text-[#5BAD8F]" : "border-[#1a1a1a] text-[#888888]"
               }`}
             >
               {t.label}

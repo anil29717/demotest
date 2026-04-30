@@ -927,7 +927,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                         <div className="absolute left-[64px] top-0 z-[100] min-w-[220px] rounded-lg border border-[#2a2a2a] bg-[#1a1a1a] py-1 shadow-xl">
                           {category.items.map((item) => {
                             const active = pathMatches(pathname, item.href);
-                            const badge = item.badgeKey ? Number(counts[item.badgeKey] ?? 0) : 0;
+                            const badge =
+                              item.badgeKey && item.badgeKey in counts
+                                ? Number(counts[item.badgeKey as keyof SidebarCounts] ?? 0)
+                                : 0;
                             return (
                               <Link
                                 key={item.href}

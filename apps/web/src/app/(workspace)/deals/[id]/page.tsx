@@ -70,6 +70,7 @@ type Act = {
     taskLabel?: string;
     key?: string;
     source?: string;
+    done?: boolean;
   };
   user?: { id: string; name: string | null; role?: string | null } | null;
 };

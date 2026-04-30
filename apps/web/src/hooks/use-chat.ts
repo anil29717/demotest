@@ -113,10 +113,11 @@ export function useChat(threadId: string | null, token: string | null) {
     socket.on("readReceipt", (p: { threadId?: string | null; userId?: string | null } | null) => {
       if (!p || typeof p.threadId !== "string" || typeof p.userId !== "string") return;
       if (p.threadId !== threadId) return;
+      const readerId = p.userId;
       setMessages((prev) =>
         prev.map((m) =>
-          m.senderId !== p.userId && !m.readBy.includes(p.userId)
-            ? { ...m, readBy: [...m.readBy, p.userId] }
+          m.senderId !== readerId && !m.readBy.includes(readerId)
+            ? { ...m, readBy: [...m.readBy, readerId] }
             : m,
         ),
       );

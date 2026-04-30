@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Property, Requirement } from '@prisma/client';
+import { NotificationType, Prisma, Property, Requirement } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailOutboundService } from './email-outbound.service';
 import { WhatsappOutboundService } from '../whatsapp/whatsapp-outbound.service';
@@ -21,6 +21,81 @@ export class NotificationsService {
     private readonly emailOutbound: EmailOutboundService,
   ) {}
 
+  private shouldDeliverType(
+    type: NotificationType,
+    prefs: ReturnType<typeof normalizeNotificationPrefs>,
+  ): boolean {
+    switch (type) {
+      case NotificationType.MATCH:
+        return prefs.matchAlerts;
+      case NotificationType.NDA:
+        return prefs.ndaAlerts;
+      case NotificationType.DEAL:
+        return prefs.dealAlerts;
+      case NotificationType.ALERT:
+        return prefs.alertAlerts;
+      default:
+        return true;
+    }
+  }
+
+  private async sendEmailTracked(
+    to: string | null | undefined,
+    subject: string,
+    text: string,
+  ): Promise<{ sent: boolean; detail: string }> {
+    if (!to) return { sent: false, detail: 'missing_recipient' };
+    try {
+      const out = await this.emailOutbound.send(to, subject, text);
+      return {
+        sent: Boolean(out.sent),
+        detail: out.detail ?? (out.sent ? 'sent' : 'failed'),
+      };
+    } catch (err) {
+      this.logger.warn(
+        `Email outbound failure to=${to}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return { sent: false, detail: 'exception' };
+    }
+  }
+
+  /**
+   * Create in-app notification when user prefs allow this type.
+   * Use `bypassPrefs` only for digest rows (gated by dailyDigest elsewhere).
+   */
+  async createInApp(
+    userId: string,
+    type: NotificationType,
+    title: string,
+    body: string,
+    metadata?: Prisma.InputJsonValue,
+    opts?: { bypassPrefs?: boolean },
+  ) {
+    if (!opts?.bypassPrefs) {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { notificationPrefs: true },
+      });
+      const prefs = normalizeNotificationPrefs(user?.notificationPrefs);
+      if (!this.shouldDeliverType(type, prefs)) {
+        return null;
+      }
+    }
+
+    return this.prisma.notification.create({
+      data: {
+        userId,
+        channel: 'in_app',
+        type,
+        title,
+        body,
+        metadata: metadata ?? undefined,
+      },
+    });
+  }
+
   async notifyMatch(
     property: Property,
     req: Requirement,
@@ -28,15 +103,19 @@ export class NotificationsService {
     hot: boolean,
   ) {
     const title = hot ? 'Hot match on your listing' : 'New match';
-    const body = `Score ${score}% — requirement in ${req.city}`;
+    const body = `Score ${Math.round(score)}% — requirement in ${req.city}`;
+    const metadata = {
+      kind: 'match',
+      propertyId: property.id,
+      requirementId: req.id,
+    } satisfies Prisma.InputJsonValue;
 
     const targets = new Set<string>();
     targets.add(property.postedById);
     targets.add(req.userId);
-    const ids = [...targets];
 
     const users = await this.prisma.user.findMany({
-      where: { id: { in: ids } },
+      where: { id: { in: [...targets] } },
       select: { id: true, email: true, notificationPrefs: true },
     });
     const prefsByUser = new Map(
@@ -50,21 +129,97 @@ export class NotificationsService {
       if (!prefs.matchAlerts) {
         continue;
       }
-      await this.prisma.notification.create({
+      const base = await this.prisma.notification.create({
         data: {
           userId,
           channel: 'in_app',
+          type: NotificationType.MATCH,
           title,
           body,
+          metadata,
         },
       });
       if (prefs.emailMatchAlerts) {
         const em = emailByUser.get(userId);
-        if (em) {
-          await this.emailOutbound.send(em, title, body);
-        }
+        const email = await this.sendEmailTracked(em, title, body);
+        await this.prisma.notification.update({
+          where: { id: base.id },
+          data: {
+            metadata: {
+              ...(metadata as Record<string, unknown>),
+              delivery: { email },
+            },
+          },
+        });
       }
     }
+  }
+
+  async notifySavedSearchMatch(userId: string, propertyTitle: string) {
+    await this.createInApp(
+      userId,
+      NotificationType.MATCH,
+      'Saved search match',
+      `A new listing matches your saved search (“${propertyTitle.slice(0, 80)}”).`,
+      { kind: 'saved_search' },
+    );
+  }
+
+  async notifyNdaDecision(params: {
+    userId: string;
+    status: 'APPROVED' | 'REJECTED';
+    institutionSummary: string;
+    institutionId: string;
+    reviewNote?: string | null;
+  }) {
+    const title =
+      params.status === 'APPROVED'
+        ? 'NDA approved — access unlocked'
+        : 'NDA request declined';
+    const body =
+      params.status === 'APPROVED'
+        ? `You can view confidential details for ${params.institutionSummary}.`
+        : `Your confidentiality request for ${params.institutionSummary} was declined.${params.reviewNote ? ` ${params.reviewNote}` : ''}`;
+    await this.createInApp(
+      params.userId,
+      NotificationType.NDA,
+      title,
+      body,
+      {
+        institutionId: params.institutionId,
+        status: params.status,
+      },
+    );
+  }
+
+  async notifyDealStageChange(params: {
+    userId: string;
+    dealId: string;
+    assetLabel: string;
+    fromStage: string;
+    toStage: string;
+  }) {
+    await this.createInApp(
+      params.userId,
+      NotificationType.DEAL,
+      'Pipeline stage updated',
+      `${params.assetLabel}: ${params.fromStage} → ${params.toStage}`,
+      { dealId: params.dealId, from: params.fromStage, to: params.toStage },
+    );
+  }
+
+  async notifySlaWarning(params: {
+    userId: string;
+    dealId: string;
+    elapsedHours: number;
+  }) {
+    await this.createInApp(
+      params.userId,
+      NotificationType.ALERT,
+      'SLA warning',
+      `Deal ${params.dealId.slice(0, 8)}… exceeded stage SLA (${params.elapsedHours.toFixed(1)}h).`,
+      { dealId: params.dealId },
+    );
   }
 
   async listForUser(userId: string, take = 20, offset = 0) {
@@ -83,6 +238,13 @@ export class NotificationsService {
   async markRead(userId: string, id: string) {
     return this.prisma.notification.updateMany({
       where: { id, userId },
+      data: { read: true },
+    });
+  }
+
+  async markAllRead(userId: string) {
+    return this.prisma.notification.updateMany({
+      where: { userId, read: false },
       data: { read: true },
     });
   }
@@ -129,7 +291,6 @@ export class NotificationsService {
   /**
    * Daily digest batch: one in-app summary per eligible user when they have unread
    * (non-digest) notifications and digest prefs are on. Deduped within ~22h.
-   * WhatsApp delivery remains a separate worker.
    */
   async sendDailyDigestSummaries(): Promise<{
     usersConsidered: number;
@@ -169,12 +330,14 @@ export class NotificationsService {
         continue;
       }
       const digestBody = `You have ${unreadCount} unread notification${unreadCount === 1 ? '' : 's'}. Open the notifications page to review.`;
-      await this.prisma.notification.create({
+      const digestRow = await this.prisma.notification.create({
         data: {
           userId: u.id,
           channel: 'in_app',
+          type: NotificationType.ALERT,
           title: DAILY_DIGEST_TITLE,
           body: digestBody,
+          metadata: { delivery: { whatsapp: null, email: null } },
         },
       });
       digestsSent++;
@@ -188,6 +351,19 @@ export class NotificationsService {
           prefs.whatsappDigestTo,
           `AR Buildwel — Daily digest\n${digestBody}`,
         );
+        await this.prisma.notification.update({
+          where: { id: digestRow.id },
+          data: {
+            metadata: {
+              delivery: {
+                whatsapp: {
+                  sent: wa.sent,
+                  detail: wa.detail ?? (wa.sent ? 'sent' : 'failed'),
+                },
+              },
+            },
+          },
+        });
         if (wa.sent) {
           whatsappDigestSent++;
         } else {
@@ -198,11 +374,21 @@ export class NotificationsService {
       }
 
       if (prefs.emailDailyDigest && u.email) {
-        await this.emailOutbound.send(
+        const email = await this.sendEmailTracked(
           u.email,
           'AR Buildwel — Daily digest',
           digestBody,
         );
+        await this.prisma.notification.update({
+          where: { id: digestRow.id },
+          data: {
+            metadata: {
+              delivery: {
+                email,
+              },
+            },
+          },
+        });
       }
     }
     return {

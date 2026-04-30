@@ -157,4 +157,47 @@ export class BuilderService {
     }
     throw new ForbiddenException('Role not allowed');
   }
+
+  async updateBookingStatus(
+    bookingId: string,
+    actorId: string,
+    actorRole: UserRole,
+    status: 'CONFIRMED' | 'CANCELLED',
+    notes?: string,
+  ) {
+    const booking = await this.prisma.projectBooking.findUnique({
+      where: { id: bookingId },
+      include: {
+        project: { select: { builderId: true } },
+      },
+    });
+    if (!booking) throw new BadRequestException('Booking not found');
+    if (
+      actorRole !== UserRole.ADMIN &&
+      booking.project.builderId !== actorId
+    ) {
+      throw new ForbiddenException('Not allowed to update this booking');
+    }
+    if (status === 'CONFIRMED') {
+      return this.prisma.projectBooking.update({
+        where: { id: booking.id },
+        data: {
+          status: 'CONFIRMED',
+          confirmedAt: new Date(),
+          notes: notes?.trim() || booking.notes,
+          unit: { update: { status: 'BOOKED' } },
+        },
+        include: { project: true, unit: true, buyer: { select: { id: true, name: true } } },
+      });
+    }
+    return this.prisma.projectBooking.update({
+      where: { id: booking.id },
+      data: {
+        status: 'CANCELLED',
+        notes: notes?.trim() || booking.notes,
+        unit: { update: { status: 'AVAILABLE' } },
+      },
+      include: { project: true, unit: true, buyer: { select: { id: true, name: true } } },
+    });
+  }
 }

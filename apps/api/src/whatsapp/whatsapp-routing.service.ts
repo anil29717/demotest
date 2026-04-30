@@ -1,5 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { DealType, LeadStatus, PropertyType, UserRole } from '@prisma/client';
+import {
+  DealType,
+  LeadStatus,
+  NotificationType,
+  PropertyType,
+  UserRole,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { MatchingService } from '../matching/matching.service';
@@ -181,8 +187,10 @@ export class WhatsappRoutingService {
         data: {
           userId: ownerId,
           channel: 'in_app',
+          type: NotificationType.ALERT,
           title: 'New WhatsApp lead',
           body: `Buyer looking for ${nlp.propertyType ?? 'property'} in ${nlp.city ?? '—'}`,
+          metadata: { leadId: lead.id },
         },
       });
 
@@ -222,8 +230,10 @@ export class WhatsappRoutingService {
         data: {
           userId: ownerId,
           channel: 'in_app',
+          type: NotificationType.ALERT,
           title: 'New WhatsApp lead',
           body: `Seller inquiry (${nlp.propertyType ?? '—'} in ${nlp.city ?? '—'})`,
+          metadata: { leadId: lead.id },
         },
       });
       await this.prisma.whatsAppIngest.update({
@@ -267,8 +277,10 @@ export class WhatsappRoutingService {
           data: {
             userId: a.id,
             channel: 'in_app',
+            type: NotificationType.ALERT,
             title: 'Institutional inquiry from WhatsApp',
             body: `Org ${orgId} — see lead ${lead.id}`,
+            metadata: { leadId: lead.id, organizationId: orgId },
           },
         });
       }

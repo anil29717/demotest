@@ -4,6 +4,7 @@ import {
   Controller,
   Get,
   Param,
+  Query,
   Put,
   UseGuards,
 } from '@nestjs/common';
@@ -12,6 +13,8 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtPayloadUser } from '../common/decorators/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
+import { Roles } from '../common/decorators/roles.decorator';
+import { RolesGuard } from '../common/guards/roles.guard';
 import {
   IsArray,
   IsBoolean,
@@ -85,6 +88,18 @@ class NotificationPrefsDto {
   @IsBoolean()
   slaWarnings?: boolean;
 
+  @IsOptional()
+  @IsBoolean()
+  ndaAlerts?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  dealAlerts?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  alertAlerts?: boolean;
+
   /** Local hour (0–23) for digest send window preview; omit for default 09:00. */
   @IsOptional()
   @IsInt()
@@ -124,7 +139,7 @@ class NotificationPrefsDto {
 }
 
 @Controller('user')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class UsersController {
   constructor(private readonly prisma: PrismaService) {}
 
@@ -294,5 +309,69 @@ export class UsersController {
     });
     if (!u) return null;
     return { trustScore: u.trustScore, verified: u.verified };
+  }
+
+  @Get('admin/list')
+  @Roles(UserRole.ADMIN)
+  async adminList(
+    @Query('q') q?: string,
+    @Query('role') role?: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ) {
+    const take = Math.min(200, Math.max(1, Number(limit ?? 50) || 50));
+    const skip = Math.max(0, Number(offset ?? 0) || 0);
+    const needle = q?.trim();
+    const roleNorm = role?.trim().toUpperCase();
+    const roleFilter =
+      roleNorm && (Object.values(UserRole) as string[]).includes(roleNorm)
+        ? (roleNorm as UserRole)
+        : undefined;
+
+    const where = {
+      ...(needle
+        ? {
+            OR: [
+              { name: { contains: needle, mode: 'insensitive' as const } },
+              { email: { contains: needle, mode: 'insensitive' as const } },
+              { id: { contains: needle, mode: 'insensitive' as const } },
+            ],
+          }
+        : {}),
+      ...(roleFilter ? { role: roleFilter } : {}),
+    };
+
+    const [data, total] = await Promise.all([
+      this.prisma.user.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        take,
+        skip,
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+          verified: true,
+          onboardingStep: true,
+          createdAt: true,
+        },
+      }),
+      this.prisma.user.count({ where }),
+    ]);
+    return { data, total, hasMore: skip + data.length < total };
+  }
+
+  @Put('admin/:id/role')
+  @Roles(UserRole.ADMIN)
+  async adminSetRole(
+    @Param('id') id: string,
+    @Body() dto: UpdateRoleDto,
+  ) {
+    return this.prisma.user.update({
+      where: { id },
+      data: { role: dto.role },
+      select: { id: true, role: true, name: true, email: true },
+    });
   }
 }

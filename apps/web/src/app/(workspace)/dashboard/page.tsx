@@ -49,9 +49,10 @@ type SvcReq = { id: string; type: string; status: string; createdAt: string };
 
 export default function DashboardPage() {
   const { token, ready, user } = useAuth();
+  const canReadLeads = user?.role === "ADMIN" || user?.role === "BROKER";
   const { data: dashboardData, isLoading: loading } = useQuery({
     queryKey: ["dashboard-all", token, user?.role],
-    enabled: Boolean(ready && token),
+    enabled: Boolean(ready && token && user?.role),
     queryFn: async () => {
       if (
         user?.role === "BUYER" ||
@@ -71,36 +72,29 @@ export default function DashboardPage() {
       }
 
       if (user?.role === "NRI") {
-        const [summary, properties, orgs] = await Promise.all([
-          apiFetch<DashboardSummary>("/dashboard/summary", { token: token ?? undefined }).catch(() => null),
-          apiFetch<SellerProperty[]>("/properties/mine?limit=20&offset=0", { token: token ?? undefined }).catch(() => []),
-          apiFetch<{ id: string; name: string }[]>("/organizations/mine", { token: token ?? undefined }).catch(() => []),
-        ]);
-        const oid = orgs[0]?.id;
-        const [svcRequests, nriDashProfile] = await Promise.all([
-          oid
-            ? apiFetch<SvcReq[]>(
-                `/services/requests?organizationId=${encodeURIComponent(oid)}`,
-                { token: token ?? undefined },
-              ).catch(() => [])
-            : Promise.resolve([] as SvcReq[]),
-          apiFetch<NriDashProfile>("/verticals/nri/profile", { token: token ?? undefined }).catch(() => null),
-        ]);
+        const summary = await apiFetch<DashboardSummary>("/dashboard/summary", {
+          token: token ?? undefined,
+        }).catch(() => null);
+        const nriDashProfile = await apiFetch<NriDashProfile>("/verticals/nri/profile", {
+          token: token ?? undefined,
+        }).catch(() => null);
         return {
           summary,
           deals: [] as Deal[],
           leads: [] as Lead[],
-          orgName: orgs[0]?.name ?? null,
-          properties,
+          orgName: null as string | null,
+          properties: [] as SellerProperty[],
           nriDashProfile,
-          svcRequests,
+          svcRequests: [] as SvcReq[],
         };
       }
 
       const [summary, deals, leads, orgs, properties] = await Promise.all([
         apiFetch<DashboardSummary>("/dashboard/summary", { token: token ?? undefined }).catch(() => null),
         apiFetch<Deal[]>("/deals?limit=20&offset=0", { token: token ?? undefined }).catch(() => []),
-        apiFetch<Lead[]>("/leads?limit=20&offset=0", { token: token ?? undefined }).catch(() => []),
+        canReadLeads
+          ? apiFetch<Lead[]>("/leads?limit=20&offset=0", { token: token ?? undefined }).catch(() => [])
+          : Promise.resolve([] as Lead[]),
         apiFetch<{ id: string; name: string }[]>("/organizations/mine", {
           token: token ?? undefined,
         }).catch(() => []),
@@ -300,6 +294,14 @@ export default function DashboardPage() {
                 <Link href="/search" className="rounded-lg border border-[#1f1f1f] p-3 hover:border-[#00C49A]">Search buyers</Link>
                 <Link href="/services-hub" className="rounded-lg border border-[#1f1f1f] p-3 hover:border-[#00C49A]">Get legal help</Link>
                 <Link href="/reputation" className="rounded-lg border border-[#1f1f1f] p-3 hover:border-[#00C49A]">View reputation</Link>
+                {!canReadLeads ? (
+                  <Link
+                    href="/services-hub"
+                    className="col-span-2 rounded-lg border border-[#EF9F2730] bg-[#EF9F2710] p-3 text-[#EF9F27] hover:border-[#EF9F27]"
+                  >
+                    Request CRM access
+                  </Link>
+                ) : null}
               </div>
             </section>
           </div>
@@ -321,7 +323,13 @@ export default function DashboardPage() {
       </div>
 
       <div className="grid gap-3 xl:grid-cols-5">
-        <StatCard icon={Building2} label="My listings" value={summary?.quickStats.myProperties ?? 0} subtext="+2 this week" delay={0} />
+        <StatCard
+          icon={Building2}
+          label="My listings"
+          value={summary?.quickStats.myProperties ?? 0}
+          subtext="Active + pipeline scope"
+          delay={0}
+        />
         <StatCard icon={Users} label="Active leads" value={leads.length} subtext={<span>{leads.filter((x) => x.pipelineStage === "LEAD").length} hot · {Math.max(leads.length - leads.filter((x) => x.pipelineStage === "LEAD").length, 0)} warm</span>} delay={0.1} />
         <StatCard icon={GitMerge} label="New matches" value={summary?.quickStats.myMatches ?? 0} subtext={`${hotMatches} hot matches`} delay={0.2} />
         <StatCard icon={Briefcase} label="Active deals" value={deals.length} subtext={`${formatINR(pipelineValue)} pipeline value`} delay={0.3} />

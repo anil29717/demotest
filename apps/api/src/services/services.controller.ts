@@ -10,15 +10,21 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { UserRole } from '@prisma/client';
+import { ServiceRequestStatus, UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtPayloadUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { PrismaService } from '../prisma/prisma.service';
-import { IsIn, IsNotEmpty, IsOptional, IsString } from 'class-validator';
-import { OrganizationsService } from '../organizations/organizations.service';
+import {
+  IsEnum,
+  IsIn,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+} from 'class-validator';
+import { ServicesService } from './services.service';
 
 class AssignPartnerDto {
   @IsString()
@@ -27,14 +33,14 @@ class AssignPartnerDto {
 }
 
 class UpdateServiceRequestStatusDto {
-  @IsIn(['open', 'assigned', 'in_progress', 'completed', 'cancelled'])
-  status!: 'open' | 'assigned' | 'in_progress' | 'completed' | 'cancelled';
+  @IsEnum(ServiceRequestStatus)
+  status!: ServiceRequestStatus;
 }
 
 class CreateServiceRequestDto {
   @IsOptional()
   @IsString()
-  organizationId!: string;
+  organizationId?: string;
 
   @IsIn(['legal', 'loan', 'insurance'])
   type!: 'legal' | 'loan' | 'insurance';
@@ -59,7 +65,7 @@ class CreateServiceRequestDto {
 export class ServicesController {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly organizations: OrganizationsService,
+    private readonly services: ServicesService,
   ) {}
 
   /** M24–M26 — catalog of partner-service verticals (requests via POST /services/requests). */
@@ -83,6 +89,7 @@ export class ServicesController {
           defaultSlaDays: 7,
         },
       ],
+      statuses: ['OPEN', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'],
     };
   }
 
@@ -91,19 +98,7 @@ export class ServicesController {
     @CurrentUser() user: JwtPayloadUser,
     @Body() dto: CreateServiceRequestDto,
   ) {
-    return this.organizations
-      .resolveOrganizationIdForUser(user.sub, dto.organizationId)
-      .then((orgId) => {
-        if (!orgId) throw new ForbiddenException('Organization access required');
-        return this.prisma.serviceRequest.create({
-          data: {
-            organizationId: orgId,
-            dealId: dto.dealId,
-            type: dto.type,
-            status: 'open',
-          },
-        });
-      });
+    return this.services.createRequest(user.sub, dto);
   }
 
   @Get('requests')
@@ -111,15 +106,7 @@ export class ServicesController {
     @CurrentUser() user: JwtPayloadUser,
     @Query('organizationId') organizationId?: string,
   ) {
-    const resolved = await this.organizations.resolveOrganizationIdForUser(
-      user.sub,
-      organizationId,
-    );
-    if (!resolved) return [];
-    return this.prisma.serviceRequest.findMany({
-      where: { organizationId: resolved },
-      orderBy: { createdAt: 'desc' },
-    });
+    return this.services.listForOrg(user.sub, organizationId);
   }
 
   @Put('requests/:id/status')
@@ -128,16 +115,7 @@ export class ServicesController {
     @Param('id') id: string,
     @Body() dto: UpdateServiceRequestStatusDto,
   ) {
-    const row = await this.prisma.serviceRequest.findUnique({ where: { id } });
-    if (!row) throw new NotFoundException();
-    const member = await this.prisma.organizationMember.findFirst({
-      where: { userId: user.sub, organizationId: row.organizationId },
-    });
-    if (!member) throw new ForbiddenException();
-    return this.prisma.serviceRequest.update({
-      where: { id },
-      data: { status: dto.status },
-    });
+    return this.services.updateRequestStatus(user.sub, id, dto.status);
   }
 
   @Put('requests/:id/partner')
@@ -147,15 +125,30 @@ export class ServicesController {
     @Param('id') id: string,
     @Body() dto: AssignPartnerDto,
   ) {
-    const row = await this.prisma.serviceRequest.findUnique({ where: { id } });
-    if (!row) throw new NotFoundException();
-    const member = await this.prisma.organizationMember.findFirst({
-      where: { userId: user.sub, organizationId: row.organizationId },
+    return this.services.assignPartner(user.sub, id, dto.partnerId);
+  }
+
+  /** Deal-scoped list (same shape as timeline services). */
+  @Get('requests/by-deal/:dealId')
+  async listByDeal(
+    @CurrentUser() user: JwtPayloadUser,
+    @Param('dealId') dealId: string,
+  ) {
+    const deal = await this.prisma.deal.findFirst({
+      where: {
+        id: dealId,
+        OR: [
+          { requirement: { userId: user.sub } },
+          {
+            organization: {
+              members: { some: { userId: user.sub } },
+            },
+          },
+        ],
+      },
+      select: { id: true },
     });
-    if (!member) throw new ForbiddenException();
-    return this.prisma.serviceRequest.update({
-      where: { id },
-      data: { partnerId: dto.partnerId, status: 'assigned' },
-    });
+    if (!deal) throw new NotFoundException();
+    return this.services.findManyWithIncludes({ dealId });
   }
 }

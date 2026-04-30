@@ -12,7 +12,14 @@ import { timeAgo } from "@/lib/format";
 import { EmptyState } from "@/components/ui/empty-state";
 import { LoadingSkeleton } from "@/components/ui/loading-skeleton";
 
-type SvcReq = { id: string; type: string; status: string; createdAt: string };
+type SvcReq = {
+  id: string;
+  type: string;
+  status: string;
+  createdAt: string;
+  partner?: { name: string } | null;
+};
+type PartnerOpt = { id: string; name: string; type: string; city?: string | null };
 type OrgRow = { id: string; name?: string; organizationId?: string; isActive?: boolean };
 
 function BrokerServicesHub({
@@ -27,7 +34,10 @@ function BrokerServicesHub({
   const [type, setType] = useState<"legal" | "loan" | "insurance">("legal");
   const [partnerId, setPartnerId] = useState("");
   const [requestId, setRequestId] = useState("");
-  const [reqStatus, setReqStatus] = useState("in_progress");
+  const [reqStatus, setReqStatus] = useState("IN_PROGRESS");
+  const [svcRows, setSvcRows] = useState<SvcReq[]>([]);
+  const [partnerOpts, setPartnerOpts] = useState<PartnerOpt[]>([]);
+  const [svcTick, setSvcTick] = useState(0);
   const [msg, setMsg] = useState<string | null>(null);
   const [orgs, setOrgs] = useState<OrgRow[]>([]);
 
@@ -48,11 +58,49 @@ function BrokerServicesHub({
     };
   }, [token, orgId]);
 
+  useEffect(() => {
+    if (!token || !orgId.trim()) {
+      setSvcRows([]);
+      return;
+    }
+    let cancelled = false;
+    void apiFetch<SvcReq[]>(`/services/requests?organizationId=${encodeURIComponent(orgId)}`, { token })
+      .then((rows) => {
+        if (!cancelled) setSvcRows(Array.isArray(rows) ? rows : []);
+      })
+      .catch(() => {
+        if (!cancelled) setSvcRows([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, orgId, svcTick]);
+
+  useEffect(() => {
+    if (!token) {
+      setPartnerOpts([]);
+      return;
+    }
+    let cancelled = false;
+    const qs = new URLSearchParams({ vertical: type, limit: "100" });
+    void apiFetch<{ data: PartnerOpt[] }>(`/partners?${qs.toString()}`, { token })
+      .then((r) => {
+        if (cancelled) return;
+        setPartnerOpts(Array.isArray(r?.data) ? r.data : []);
+      })
+      .catch(() => {
+        if (!cancelled) setPartnerOpts([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, type]);
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!token || !orgId.trim()) return;
     setMsg(null);
-    const row = await apiFetch<{ id: string }>("/services/requests", {
+    const row = await apiFetch<SvcReq>("/services/requests", {
       method: "POST",
       token,
       body: JSON.stringify({
@@ -62,6 +110,8 @@ function BrokerServicesHub({
       }),
     });
     setMsg(`Created request ${row.id}`);
+    setRequestId(row.id);
+    setSvcTick((n) => n + 1);
   }
 
   async function assign() {
@@ -72,6 +122,8 @@ function BrokerServicesHub({
       body: JSON.stringify({ partnerId }),
     });
     setMsg("Partner assigned");
+    setPartnerId("");
+    setSvcTick((n) => n + 1);
   }
 
   async function updatePipelineStatus() {
@@ -82,6 +134,7 @@ function BrokerServicesHub({
       body: JSON.stringify({ status: reqStatus }),
     });
     setMsg(`Status → ${reqStatus}`);
+    setSvcTick((n) => n + 1);
   }
 
   return (
@@ -187,27 +240,42 @@ function BrokerServicesHub({
         {msg && <p className="mt-2 text-teal-400">{msg}</p>}
       </div>
       <div className="border-t border-zinc-800 pt-6">
-        <h2 className="font-medium text-zinc-300">Assign partner</h2>
+        <h2 className="font-medium text-zinc-300">Assign partner &amp; status</h2>
         <p className="text-zinc-500">
-          Use IDs from{" "}
-          <Link href="/partners" className="text-teal-400">
-            Partners
-          </Link>{" "}
-          and your service request list.
+          Pick an open request and a partner for the same vertical (legal / loan / insurance). List refreshes when you
+          open a new request.
         </p>
         <div className="mt-3 space-y-2">
-          <input
-            placeholder="Service request ID"
-            className="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2"
-            value={requestId}
-            onChange={(e) => setRequestId(e.target.value)}
-          />
-          <input
-            placeholder="Partner ID"
-            className="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2"
-            value={partnerId}
-            onChange={(e) => setPartnerId(e.target.value)}
-          />
+          <label className="block text-xs text-zinc-500">
+            Service request
+            <select
+              className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-200"
+              value={requestId}
+              onChange={(e) => setRequestId(e.target.value)}
+            >
+              <option value="">Select request</option>
+              {svcRows.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.type} · {r.status} · {r.id.slice(0, 8)}…
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block text-xs text-zinc-500">
+            Partner (matches type: {type})
+            <select
+              className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-200"
+              value={partnerId}
+              onChange={(e) => setPartnerId(e.target.value)}
+            >
+              <option value="">Select partner</option>
+              {partnerOpts.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} · {p.type}{p.city ? ` · ${p.city}` : ""}
+                </option>
+              ))}
+            </select>
+          </label>
           <button
             type="button"
             onClick={() => void assign()}
@@ -222,11 +290,10 @@ function BrokerServicesHub({
               value={reqStatus}
               onChange={(e) => setReqStatus(e.target.value)}
             >
-              <option value="open">open</option>
-              <option value="assigned">assigned</option>
-              <option value="in_progress">in_progress</option>
-              <option value="completed">completed</option>
-              <option value="cancelled">cancelled</option>
+              <option value="OPEN">OPEN</option>
+              <option value="IN_PROGRESS">IN_PROGRESS</option>
+              <option value="COMPLETED">COMPLETED</option>
+              <option value="CANCELLED">CANCELLED</option>
             </select>
           </label>
           <button

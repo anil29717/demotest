@@ -12,6 +12,9 @@ type ThreadBootstrap = {
   thread: { id: string; title: string | null; dealId: string | null };
   messages: ChatMessageRow[];
 };
+type ThreadSummary = {
+  participants: { id: string; name: string; role?: string }[];
+};
 
 export function DealChatPanel({
   dealId,
@@ -30,6 +33,7 @@ export function DealChatPanel({
   const [bootError, setBootError] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [nameById, setNameById] = useState<Record<string, string>>({});
   const {
     messages,
     setMessages,
@@ -48,6 +52,11 @@ export function DealChatPanel({
       });
       setThreadId(data.thread.id);
       setMessages(data.messages);
+      const summary = await apiFetch<ThreadSummary>(`/chat/threads/${data.thread.id}/summary`, {
+        token,
+      });
+      const mapped = Object.fromEntries(summary.participants.map((p) => [p.id, p.name]));
+      setNameById(mapped);
     } catch (e) {
       setBootError(e instanceof Error ? e.message : "Could not open deal chat");
     }
@@ -62,8 +71,10 @@ export function DealChatPanel({
     return "Someone is typing…";
   }, [typingUserId]);
 
-  const labelFor = (userId: string) =>
-    userId === currentUserId ? "You" : `User ${userId.slice(0, 6)}`;
+  const labelFor = (userId: string) => {
+    if (userId === currentUserId) return "You";
+    return nameById[userId] || `User ${userId.slice(0, 6)}`;
+  };
 
   async function send() {
     const text = input.trim();
@@ -198,7 +209,7 @@ export function DealChatPanel({
                   <span className="whitespace-pre-wrap">{m.content}</span>
                 )}
                 <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-zinc-500">
-                  <span>{timeAgo(m.createdAt)}</span>
+                  <span title={new Date(m.createdAt).toLocaleString()}>{timeAgo(m.createdAt)}</span>
                   {isSelf && m.readBy.filter((id) => id !== currentUserId).length ? (
                     <span>
                       Read by{" "}

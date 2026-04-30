@@ -8,13 +8,13 @@ export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
   @Post('login')
-  @Throttle({ auth: { limit: 10, ttl: 60000 } })
+  @Throttle({ short: { limit: 10, ttl: 60000 } })
   login(@Body() dto: LoginDto) {
     return this.auth.requestOtp(dto.phone);
   }
 
   @Post('verify-otp')
-  @Throttle({ auth: { limit: 10, ttl: 60000 } })
+  @Throttle({ short: { limit: 10, ttl: 60000 } })
   verify(@Body() dto: VerifyOtpDto) {
     return this.auth.verifyOtp(dto.phone, dto.otp, dto.role);
   }

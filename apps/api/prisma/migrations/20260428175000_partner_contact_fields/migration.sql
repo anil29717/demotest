@@ -1,0 +1,4 @@
+ALTER TABLE "Partner"
+ADD COLUMN "phone" TEXT,
+ADD COLUMN "email" TEXT,
+ADD COLUMN "city" TEXT;

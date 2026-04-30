@@ -45,9 +45,9 @@ import { AppThrottlerGuard } from './common/guards/app-throttler.guard';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    // Single global bucket: a second named throttler would apply to *every* route (effective cap = min of all).
     ThrottlerModule.forRoot([
-      { name: 'short', ttl: 60000, limit: 100 },
-      { name: 'auth', ttl: 60000, limit: 10 },
+      { name: 'short', ttl: 60000, limit: 300 },
     ]),
     ScheduleModule.forRoot(),
     PrismaModule,

@@ -1,25 +1,35 @@
 "use client";
 
 import Link from "next/link";
+import Script from "next/script";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronLeft, FileText, Image as ImageIcon, MapPin, Send, ShieldAlert } from "lucide-react";
+import { Building2, Check, ChevronLeft, FileText, Image as ImageIcon, Landmark, MapPin, Navigation, Send, ShieldAlert } from "lucide-react";
+import toast from "react-hot-toast";
 import { useAuth } from "@/contexts/auth-context";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, apiUrl, getUserFacingErrorMessage } from "@/lib/api";
+import { resolvePropertyImageUrlForDisplay, validateImageFileForUpload } from "@/lib/property-images";
 import { formatINR } from "@/lib/format";
+import { toStructuredLocation, type StructuredLocation } from "@/lib/google-places";
+import { citiesForState, INDIA_STATES } from "@/lib/india-locations";
 
 const PT = ["RESIDENTIAL", "COMMERCIAL", "PLOT", "INSTITUTIONAL"] as const;
 const DT = ["SALE", "RENT"] as const;
 type OrgRow = { id: string; name?: string; organizationId?: string; isActive?: boolean };
 
 export default function NewPropertyPage() {
+  const googleMapsKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
   const { token, user } = useAuth();
   const router = useRouter();
   const queryClient = useQueryClient();
+  const areaInputRef = useRef<HTMLInputElement | null>(null);
+  const localityInputRef = useRef<HTMLInputElement | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [uploadMsg, setUploadMsg] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [orgs, setOrgs] = useState<OrgRow[]>([]);
+  const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
   const [form, setForm] = useState({
     title: "",
     description: "",
@@ -39,6 +49,15 @@ export default function NewPropertyPage() {
     reasonForSelling: "",
     timeline: "",
     negotiable: false,
+    state: INDIA_STATES[0] ?? "Delhi",
+    location: {
+      place_name: "",
+      city: "",
+      area: "",
+      state: "",
+      lat: 28.6139,
+      lng: 77.209,
+    } as StructuredLocation,
   });
 
   async function submit(e: React.FormEvent) {
@@ -66,6 +85,7 @@ export default function NewPropertyPage() {
           addressPrivate: form.addressPrivate,
           latitude: Number(form.latitude),
           longitude: Number(form.longitude),
+          location: form.location,
           organizationId: form.organizationId || undefined,
           imageUrls: imageUrls.length ? imageUrls : undefined,
           isHighOpportunity: form.isHighOpportunity,
@@ -78,58 +98,98 @@ export default function NewPropertyPage() {
       await queryClient.invalidateQueries({ queryKey: ["matches"] });
       router.push("/properties");
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Error");
+      const message = getUserFacingErrorMessage(
+        e,
+        "Property could not be published. Please review your inputs and try again.",
+      );
+      setErr(message);
+      toast.error(message, { duration: 5000 });
     }
   }
 
   async function mockUpload(files: FileList | null) {
     if (!token || !files?.length) return;
     setUploadMsg(null);
+    setUploading(true);
     const urls: string[] = [];
-    let failed = 0;
+    const errors: string[] = [];
     for (const file of Array.from(files)) {
+      const v = validateImageFileForUpload(file);
+      if (!v.ok) {
+        errors.push(`${file.name}: ${v.reason}`);
+        continue;
+      }
       try {
-        const res = await apiFetch<{
-          uploadUrl: string;
-          publicUrl: string;
-          method?: string;
-          headers?: Record<string, string>;
-        }>("/properties/upload-url", {
+        const formData = new FormData();
+        formData.append("file", file);
+        const res = await fetch(apiUrl("/properties/files"), {
           method: "POST",
-          token,
-          body: JSON.stringify({ fileName: file.name, contentType: file.type }),
-        });
-        const uploadRes = await fetch(res.uploadUrl, {
-          method: res.method ?? "PUT",
           headers: {
-            "content-type": file.type || "application/octet-stream",
-            ...(res.headers ?? {}),
+            Authorization: `Bearer ${token}`,
           },
-          body: file,
+          body: formData,
         });
-        if (!uploadRes.ok) {
-          failed += 1;
+        const text = await res.text();
+        if (!res.ok) {
+          let detail = text;
+          try {
+            const j = JSON.parse(text) as { message?: string | string[] };
+            if (Array.isArray(j.message)) detail = j.message.join(", ");
+            else if (typeof j.message === "string") detail = j.message;
+          } catch {
+            /* raw text */
+          }
+          errors.push(`${file.name}: ${detail || res.statusText}`);
           continue;
         }
-        urls.push(res.publicUrl);
-      } catch {
-        failed += 1;
+        let body: { url?: string };
+        try {
+          body = JSON.parse(text) as { url?: string };
+        } catch {
+          errors.push(`${file.name}: Invalid server response`);
+          continue;
+        }
+        if (!body.url) {
+          errors.push(`${file.name}: No URL returned`);
+          continue;
+        }
+        urls.push(body.url);
+      } catch (e) {
+        errors.push(`${file.name}: ${getUserFacingErrorMessage(e, "Upload failed")}`);
       }
     }
+    setUploading(false);
     if (urls.length) {
       setForm((f) => ({
         ...f,
         imageUrlsText: [f.imageUrlsText, ...urls].filter(Boolean).join("\n"),
       }));
-      setUploadMsg(
-        failed
-          ? `Uploaded ${urls.length} file(s). ${failed} failed.`
-          : `Uploaded ${urls.length} file(s).`,
+      toast.success(
+        urls.length === 1
+          ? "Image uploaded. Confirm previews below, then publish."
+          : `${urls.length} images uploaded. Confirm previews below, then publish.`,
       );
-      return;
     }
-    setUploadMsg("Upload failed. Listing will show placeholder image until a valid image URL is saved.");
+    if (errors.length) {
+      toast.error(errors.slice(0, 4).join(" · "), { duration: 6500 });
+      setUploadMsg(
+        errors.length > 4
+          ? `${errors.length} files had issues — JPG/PNG only, max 15MB each.`
+          : errors.join(" "),
+      );
+    } else if (!urls.length) {
+      toast.error("No images uploaded.");
+      setUploadMsg("Choose JPG or PNG files (max 15MB each).");
+    }
   }
+
+  useEffect(() => {
+    const urls = form.imageUrlsText
+      .split(/\n|,/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    setSelectedFiles(urls);
+  }, [form.imageUrlsText]);
 
   useEffect(() => {
     if (!token || user?.role === "SELLER") return;
@@ -152,6 +212,54 @@ export default function NewPropertyPage() {
     };
   }, [token, user?.role, form.organizationId]);
 
+  useEffect(() => {
+    let attempts = 0;
+    const timer = window.setInterval(() => {
+      const g = (window as any).google;
+      if (!g?.maps?.places || !areaInputRef.current || !localityInputRef.current) {
+        attempts += 1;
+        if (attempts > 20) window.clearInterval(timer);
+        return;
+      }
+      window.clearInterval(timer);
+      const fields = ["address_components", "geometry", "formatted_address", "name"];
+      const areaAuto = new g.maps.places.Autocomplete(areaInputRef.current, { fields, types: ["geocode"] });
+      const localityAuto = new g.maps.places.Autocomplete(localityInputRef.current, { fields, types: ["geocode"] });
+      const applyPlace = (place: any, source: "city" | "area" | "locality") => {
+        setForm((f) => {
+          const structured = toStructuredLocation(place, {
+            city: f.city,
+            area: f.areaPublic,
+            place_name: f.location.place_name,
+            state: f.location.state,
+            lat: Number(f.latitude),
+            lng: Number(f.longitude),
+          });
+          return {
+            ...f,
+            city: structured.city || f.city,
+            areaPublic:
+              source === "area" || source === "locality"
+                ? structured.area || place?.name || f.areaPublic
+                : f.areaPublic,
+            localityPublic:
+              source === "locality"
+                ? place?.name || structured.area || f.localityPublic
+                : source === "area"
+                  ? structured.area || f.localityPublic
+                  : f.localityPublic,
+            latitude: String(structured.lat ?? f.latitude),
+            longitude: String(structured.lng ?? f.longitude),
+            location: structured,
+          };
+        });
+      };
+      areaAuto.addListener("place_changed", () => applyPlace(areaAuto.getPlace(), "area"));
+      localityAuto.addListener("place_changed", () => applyPlace(localityAuto.getPlace(), "locality"));
+    }, 300);
+    return () => window.clearInterval(timer);
+  }, []);
+
   if (!token)
     return (
       <p>
@@ -163,22 +271,30 @@ export default function NewPropertyPage() {
     );
 
   return (
-    <div className="mx-auto max-w-2xl">
-      <Link href="/properties" className="inline-flex items-center gap-2 text-sm text-[#888] hover:text-white">
-        <ChevronLeft className="h-4 w-4" /> Back
-      </Link>
-      <h1 className="mt-2 text-xl font-semibold">Post property</h1>
-      {user?.role === "SELLER" ? (
-        <p className="mt-2 text-sm text-[#888]">List your property and get matched with verified buyers automatically.</p>
-      ) : (
-        <p className="mt-2 inline-flex items-center gap-2 text-sm text-amber-300">
-          <ShieldAlert className="h-4 w-4" /> Do not include phone, email, or URLs — platform rule.
-        </p>
-      )}
-      <form onSubmit={submit} className="mt-6 space-y-3 text-sm">
+    <div className="mx-auto w-full max-w-5xl [color-scheme:dark]">
+      {googleMapsKey ? (
+        <Script
+          src={`https://maps.googleapis.com/maps/api/js?key=${googleMapsKey}&libraries=places`}
+          strategy="afterInteractive"
+        />
+      ) : null}
+      <div>
+          <Link href="/properties" className="inline-flex items-center gap-2 text-sm text-[#888] hover:text-white">
+            <ChevronLeft className="h-4 w-4" /> Back
+          </Link>
+          <h1 className="mt-2 text-xl font-semibold">Post property</h1>
+          {user?.role === "SELLER" ? (
+            <p className="mt-2 text-sm text-[#888]">List your property and get matched with verified buyers automatically.</p>
+          ) : (
+            <p className="mt-2 inline-flex items-center gap-2 text-sm text-amber-300">
+              <ShieldAlert className="h-4 w-4" /> Do not include phone, email, or URLs — platform rule.
+            </p>
+          )}
+          <form onSubmit={submit} className="mt-6 space-y-3 text-sm">
         <section className="rounded-xl border border-[#1f1f1f] bg-[#111111] p-4">
           <p className="mb-3 inline-flex items-center gap-2 font-medium text-white"><FileText className="h-4 w-4 text-[#00C49A]" /> Basic details</p>
-        <label className="block">
+        <div className="grid gap-3 sm:grid-cols-2">
+        <label className="block sm:col-span-2">
           Title
           <input
             required
@@ -187,7 +303,7 @@ export default function NewPropertyPage() {
             onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
           />
         </label>
-        <label className="block">
+        <label className="block sm:col-span-2">
           Description
           <textarea
             className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2"
@@ -227,6 +343,7 @@ export default function NewPropertyPage() {
             </select>
           </label>
         </div>
+        </div>
         </section>
         <section className="rounded-xl border border-[#1f1f1f] bg-[#111111] p-4">
           <p className="mb-3 font-medium text-white">Pricing & size</p>
@@ -259,33 +376,77 @@ export default function NewPropertyPage() {
             <MapPin className="h-4 w-4 text-[#00C49A]" /> <span>Location</span>
           </p>
           <div className="space-y-3">
-        <label className="block">
-          <span className="mb-1 block">City</span>
-          <input
-            required
-            className="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2"
-            value={form.city}
-            onChange={(e) => setForm((f) => ({ ...f, city: e.target.value }))}
-          />
-        </label>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="block">
+            <span className="mb-1 inline-flex items-center gap-1">State <Landmark className="h-3.5 w-3.5 text-[#888]" /></span>
+            <select
+              className="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-zinc-100 [color-scheme:dark]"
+              value={form.state}
+              onChange={(e) => {
+                const nextState = e.target.value;
+                const nextCity = citiesForState(nextState)[0] ?? "";
+                setForm((f) => ({
+                  ...f,
+                  state: nextState,
+                  city: nextCity || f.city,
+                  location: { ...f.location, state: nextState, city: nextCity || f.city },
+                }));
+              }}
+            >
+              {INDIA_STATES.map((state) => (
+                <option key={state} value={state} className="bg-zinc-900 text-zinc-100">
+                  {state}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="mb-1 inline-flex items-center gap-1">City <Building2 className="h-3.5 w-3.5 text-[#888]" /></span>
+            <select
+              required
+              className="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-zinc-100 [color-scheme:dark]"
+              value={form.city}
+              onChange={(e) =>
+                setForm((f) => ({
+                  ...f,
+                  city: e.target.value,
+                  location: { ...f.location, city: e.target.value },
+                }))
+              }
+            >
+              <option value="" className="bg-zinc-900 text-zinc-100">Select city</option>
+              {citiesForState(form.state).map((city, idx) => (
+                <option key={`${city}-${idx}`} value={city} className="bg-zinc-900 text-zinc-100">
+                  {city}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
         <label className="block">
           <span className="mb-1 block">Area (public)</span>
           <input
             required
+            ref={areaInputRef}
             className="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2"
             value={form.areaPublic}
             onChange={(e) => setForm((f) => ({ ...f, areaPublic: e.target.value }))}
           />
         </label>
         <label className="block">
-          <span className="mb-1 block">Locality (public)</span>
+          <span className="mb-1 inline-flex items-center gap-1">Locality / Nearby landmark <Navigation className="h-3.5 w-3.5 text-[#888]" /></span>
           <input
             required
+            ref={localityInputRef}
             className="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2"
             value={form.localityPublic}
             onChange={(e) => setForm((f) => ({ ...f, localityPublic: e.target.value }))}
+            placeholder="Eg. Near Metro Station, Sector 62, Opp City Mall"
           />
         </label>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
         <label className="block">
           <span className="mb-1 block">Lat / Long</span>
           <div className="mt-1 flex gap-2">
@@ -321,6 +482,8 @@ export default function NewPropertyPage() {
             </select>
           </label>
         ) : null}
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
         <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2 hover:border-zinc-600">
           <input
             type="checkbox"
@@ -345,6 +508,7 @@ export default function NewPropertyPage() {
             </span>
             <span>Bank auction property</span>
           </label>
+        </div>
           {user?.role === "SELLER" ? (
             <details className="mt-3 rounded-lg border border-[#1f1f1f] p-3">
               <summary className="cursor-pointer text-xs text-[#888]">Seller motivation fields</summary>
@@ -385,16 +549,20 @@ export default function NewPropertyPage() {
           </p>
           <div className="space-y-3">
         <label className="block">
-          <span className="mb-1 block">Upload images</span>
+          <span className="mb-1 inline-flex items-center gap-1"><ImageIcon className="h-3.5 w-3.5 text-[#888]" /> Upload images</span>
           <input
             type="file"
             multiple
-            accept="image/*"
-            className="block w-full text-xs text-zinc-400 file:mr-2 file:rounded file:border-0 file:bg-zinc-800 file:px-3 file:py-1 file:text-zinc-200"
+            accept="image/jpeg,image/png,.jpg,.jpeg,.png"
+            disabled={uploading}
+            className="block w-full text-xs text-zinc-400 file:mr-2 file:rounded file:border-0 file:bg-zinc-800 file:px-3 file:py-1 file:text-zinc-200 disabled:opacity-50"
             onChange={(e) => void mockUpload(e.target.files)}
           />
         </label>
-        {uploadMsg && <p className="text-xs text-zinc-500">{uploadMsg}</p>}
+        {uploading ? (
+          <p className="text-xs text-[#00C49A]">Uploading…</p>
+        ) : null}
+        {uploadMsg && !uploading ? <p className="text-xs text-zinc-500">{uploadMsg}</p> : null}
         <label className="block">
           <span className="mb-1 block">Image URLs (https, one per line)</span>
           <textarea
@@ -405,6 +573,24 @@ export default function NewPropertyPage() {
             placeholder="https://images.unsplash.com/..."
           />
         </label>
+        {selectedFiles.length ? (
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {selectedFiles.slice(0, 9).map((url) => (
+              <div key={url} className="overflow-hidden rounded-lg border border-[#1f1f1f] bg-[#0d0d0d]">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={resolvePropertyImageUrlForDisplay(url)}
+                  alt="Property preview"
+                  className="h-24 w-full object-cover"
+                  onError={(e) => {
+                    e.currentTarget.onerror = null;
+                    e.currentTarget.src = "/placeholder-property.png";
+                  }}
+                />
+              </div>
+            ))}
+          </div>
+        ) : null}
           </div>
         </section>
         {err && <p className="text-sm text-red-400">{err}</p>}
@@ -414,7 +600,8 @@ export default function NewPropertyPage() {
         >
           {user?.role === "SELLER" ? "List my property" : "Publish listing"} <Send className="h-4 w-4" />
         </button>
-      </form>
+          </form>
+      </div>
     </div>
   );
 }

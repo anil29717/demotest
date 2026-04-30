@@ -7,16 +7,25 @@ import { useAuth } from "@/contexts/auth-context";
 import { apiFetch } from "@/lib/api";
 import { canAccessPath } from "@/lib/role-access";
 
+type NotificationType = "MATCH" | "NDA" | "DEAL" | "ALERT";
+
 type NotificationRow = {
   id: string;
+  type: NotificationType;
   title: string;
   body: string;
   read: boolean;
   createdAt: string;
 };
 
+type NotificationsListResponse = {
+  data: NotificationRow[];
+  total: number;
+  hasMore: boolean;
+};
+
 export function NotificationBell() {
-  const { token, user } = useAuth();
+  const { token, user, sessionRole } = useAuth();
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<NotificationRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -24,15 +33,15 @@ export function NotificationBell() {
   const panelRef = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
 
-  const showBell = Boolean(token && canAccessPath("/notifications", user?.role ?? null));
+  const showBell = Boolean(token && canAccessPath("/notifications", sessionRole));
 
   const load = useCallback(async () => {
     if (!token) return;
     setLoading(true);
     setErr(null);
     try {
-      const data = await apiFetch<NotificationRow[]>("/notifications", { token });
-      setItems(data);
+      const res = await apiFetch<NotificationsListResponse>("/notifications", { token });
+      setItems(res.data ?? []);
     } catch {
       setErr("Could not load notifications");
       setItems([]);
@@ -105,7 +114,7 @@ export function NotificationBell() {
         >
           <div className="border-b border-zinc-800 px-3 py-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
             Notifications
-            {user?.role && <span className="ml-2 normal-case text-zinc-400">({user.role})</span>}
+            {sessionRole && <span className="ml-2 normal-case text-zinc-400">({sessionRole})</span>}
           </div>
           <div className="max-h-80 overflow-y-auto">
             {loading && preview.length === 0 && (
@@ -118,6 +127,9 @@ export function NotificationBell() {
             <ul className="divide-y divide-zinc-800">
               {preview.map((n) => (
                 <li key={n.id} className="px-3 py-2.5 text-left text-sm">
+                  <p className="mb-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-600">
+                    {n.type}
+                  </p>
                   <p className={`font-medium ${n.read ? "text-zinc-400" : "text-zinc-100"}`}>{n.title}</p>
                   <p className="mt-0.5 line-clamp-2 text-xs text-zinc-500">{n.body}</p>
                   <div className="mt-1 flex items-center justify-between gap-2">

@@ -15,29 +15,86 @@ export class AnalyticsController {
   @Get('broker/me')
   @Roles(UserRole.ADMIN, UserRole.BROKER, UserRole.HNI)
   async brokerMe(@CurrentUser() user: JwtPayloadUser) {
+    if (user.role === UserRole.ADMIN) {
+      const [leads, deals, closedDeals, matchCount] = await Promise.all([
+        this.prisma.lead.count(),
+        this.prisma.deal.count(),
+        this.prisma.deal.count({ where: { stage: 'CLOSURE' } }),
+        this.prisma.match.count(),
+      ]);
+      return {
+        leads,
+        deals,
+        closedDeals,
+        matchCount,
+        conversionRate: deals
+          ? Number(((closedDeals / deals) * 100).toFixed(1))
+          : 0,
+      };
+    }
+
     const memberships = await this.prisma.organizationMember.findMany({
       where: { userId: user.sub },
       select: { organizationId: true },
     });
     const orgIds = memberships.map((m) => m.organizationId);
+
+    const matchWhere =
+      orgIds.length > 0
+        ? {
+            OR: [
+              { property: { postedById: user.sub } },
+              { requirement: { userId: user.sub } },
+              { property: { organizationId: { in: orgIds } } },
+            ],
+          }
+        : {
+            OR: [
+              { property: { postedById: user.sub } },
+              { requirement: { userId: user.sub } },
+            ],
+          };
+
     if (!orgIds.length) {
+      const [leads, deals, closedDeals, matchCount] = await Promise.all([
+        this.prisma.lead.count({ where: { ownerId: user.sub } }),
+        this.prisma.deal.count({
+          where: {
+            OR: [
+              { property: { postedById: user.sub } },
+              { requirement: { userId: user.sub } },
+            ],
+          },
+        }),
+        this.prisma.deal.count({
+          where: {
+            stage: 'CLOSURE',
+            OR: [
+              { property: { postedById: user.sub } },
+              { requirement: { userId: user.sub } },
+            ],
+          },
+        }),
+        this.prisma.match.count({ where: matchWhere }),
+      ]);
       return {
-        leads: 0,
-        deals: 0,
-        closedDeals: 0,
-        matchCount: 0,
-        conversionRate: 0,
+        leads,
+        deals,
+        closedDeals,
+        matchCount,
+        conversionRate: deals
+          ? Number(((closedDeals / deals) * 100).toFixed(1))
+          : 0,
       };
     }
+
     const [leads, deals, closedDeals, matchCount] = await Promise.all([
       this.prisma.lead.count({ where: { organizationId: { in: orgIds } } }),
       this.prisma.deal.count({ where: { organizationId: { in: orgIds } } }),
       this.prisma.deal.count({
         where: { organizationId: { in: orgIds }, stage: 'CLOSURE' },
       }),
-      this.prisma.match.count({
-        where: { property: { organizationId: { in: orgIds } } },
-      }),
+      this.prisma.match.count({ where: matchWhere }),
     ]);
     return {
       leads,
@@ -51,15 +108,25 @@ export class AnalyticsController {
   }
 
   @Get('deals')
-  @Roles(UserRole.ADMIN, UserRole.BROKER, UserRole.HNI)
-  async deals(@Query('organizationId') organizationId: string) {
-    if (!organizationId) return { stages: [] };
-    const deals = await this.prisma.deal.groupBy({
+  @Roles(UserRole.ADMIN, UserRole.BROKER, UserRole.HNI, UserRole.SELLER)
+  async deals(
+    @CurrentUser() user: JwtPayloadUser,
+    @Query('organizationId') organizationId?: string,
+  ) {
+    if (user.role === UserRole.ADMIN && !organizationId?.trim()) {
+      const stages = await this.prisma.deal.groupBy({
+        by: ['stage'],
+        _count: true,
+      });
+      return { stages };
+    }
+    if (!organizationId?.trim()) return { stages: [] };
+    const stages = await this.prisma.deal.groupBy({
       by: ['stage'],
       where: { organizationId },
       _count: true,
     });
-    return { stages: deals };
+    return { stages };
   }
 
   @Get('area-demand')

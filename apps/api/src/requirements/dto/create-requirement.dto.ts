@@ -5,10 +5,39 @@ import {
   IsEnum,
   IsNotEmpty,
   IsNumber,
+  IsOptional,
   IsString,
   Min,
 } from 'class-validator';
 import { DealType, PropertyType, Urgency } from '@prisma/client';
+
+class LocationDto {
+  @IsString()
+  @IsNotEmpty()
+  place_name!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  city!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  area!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  state!: string;
+
+  @Type(() => Number)
+  @IsNumber()
+  @Min(-90)
+  lat!: number;
+
+  @Type(() => Number)
+  @IsNumber()
+  @Min(-180)
+  lng!: number;
+}
 
 export class CreateRequirementDto {
   @Type(() => Number)
@@ -48,4 +77,7 @@ export class CreateRequirementDto {
 
   @IsEnum(Urgency)
   urgency!: Urgency;
+
+  @IsOptional()
+  location?: LocationDto;
 }

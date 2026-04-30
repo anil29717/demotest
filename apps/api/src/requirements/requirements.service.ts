@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { DealType, PropertyType, Urgency } from '@prisma/client';
+import { DealType, Prisma, PropertyType, Urgency } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { MatchingService } from '../matching/matching.service';
@@ -50,6 +50,9 @@ export class RequirementsService {
         areaSqftMax: dto.areaSqftMax,
         urgency: dto.urgency,
         tag,
+        ...(dto.location && {
+          location: dto.location as unknown as Prisma.InputJsonValue,
+        }),
       },
     });
 

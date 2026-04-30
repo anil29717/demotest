@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
+import { appendMatchFeedbackCsvRow } from './match-feedback-local';
 
 export type MatchMlFeatures = {
   location_match: number;
@@ -76,7 +77,7 @@ export class MlClientService {
     }
   }
 
-  recordFeedback(
+  async recordFeedback(
     matchId: string,
     feedback: {
       accepted?: boolean;
@@ -84,19 +85,33 @@ export class MlClientService {
       convertedToDeal?: boolean;
       dealClosed?: boolean;
     },
-  ): void {
+  ): Promise<void> {
     const url = `${this.baseUrl()}/match/feedback`;
-    this.http
-      .post(url, {
-        match_id: matchId,
-        accepted: feedback.accepted,
-        converted_to_lead: feedback.convertedToLead,
-        converted_to_deal: feedback.convertedToDeal,
-        deal_closed: feedback.dealClosed,
-      })
-      .subscribe({
-        error: (err: unknown) =>
-          this.logger.debug(`ML feedback failed match=${matchId}: ${String(err)}`),
-      });
+    const body = {
+      match_id: matchId,
+      accepted: feedback.accepted,
+      converted_to_lead: feedback.convertedToLead,
+      converted_to_deal: feedback.convertedToDeal,
+      deal_closed: feedback.dealClosed,
+    };
+    try {
+      await firstValueFrom(this.http.post(url, body, { timeout: 8000 }));
+    } catch (err: unknown) {
+      this.logger.warn(
+        `ML feedback HTTP failed match=${matchId}; writing local CSV backup`,
+      );
+      await appendMatchFeedbackCsvRow({
+        matchId,
+        accepted:
+          feedback.accepted === undefined ? null : Boolean(feedback.accepted),
+        convertedToLead: feedback.convertedToLead ?? null,
+        convertedToDeal: feedback.convertedToDeal ?? null,
+        dealClosed: feedback.dealClosed ?? null,
+      }).catch((e: unknown) =>
+        this.logger.warn(
+          `Local match feedback append failed: ${e instanceof Error ? e.message : String(e)}`,
+        ),
+      );
+    }
   }
 }

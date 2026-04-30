@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -111,7 +112,29 @@ type ProfileExtras = {
   instSellerPrice: string;
 };
 
-type TabId = "profile" | "credentials" | "preferences" | "security";
+type TabId = "profile" | "credentials" | "organization" | "preferences" | "security";
+
+type OrgMineRow = {
+  id: string;
+  name?: string;
+  organizationId: string;
+  role: string;
+  isActive?: boolean;
+  organization: {
+    id: string;
+    name: string;
+    reraNumber: string | null;
+    gstNumber: string | null;
+  };
+};
+
+const PROFILE_TABS: { id: TabId; label: string }[] = [
+  { id: "profile", label: "Profile" },
+  { id: "credentials", label: "Credentials" },
+  { id: "organization", label: "Organization" },
+  { id: "preferences", label: "Preferences" },
+  { id: "security", label: "Security" },
+];
 
 const STORAGE_KEY = "arbuildwel-profile-extras-v1";
 const CURRENCY_KEY = "arbuildwel-price-format";
@@ -235,10 +258,14 @@ export default function ProfilePage() {
     inAppAlerts: true,
     dealUpdates: true,
   });
+  const [orgDraft, setOrgDraft] = useState({ name: "", rera: "", gst: "" });
+  const [savingOrg, setSavingOrg] = useState(false);
+  const [switchingOrg, setSwitchingOrg] = useState(false);
 
   useEffect(() => {
     const tab = searchParams.get("tab");
     if (tab === "settings") setActiveTab("preferences");
+    if (tab === "organization") setActiveTab("organization");
   }, [searchParams]);
 
   useEffect(() => {
@@ -266,10 +293,27 @@ export default function ProfilePage() {
     enabled:
       Boolean(token) &&
       (user?.role === "BROKER" ||
+        user?.role === "SELLER" ||
         user?.role === "INSTITUTIONAL_BUYER" ||
-        user?.role === "INSTITUTIONAL_SELLER"),
-    queryFn: () => apiFetch<{ id: string; name: string }[]>("/organizations/mine", { token: token ?? undefined }).catch(() => []),
+        user?.role === "INSTITUTIONAL_SELLER" ||
+        user?.role === "ADMIN"),
+    queryFn: () =>
+      apiFetch<OrgMineRow[]>("/organizations/mine", { token: token ?? undefined }).catch(() => []),
   });
+
+  const memberships = orgsQuery.data ?? [];
+  const activeMembership = memberships.find((m) => m.isActive) ?? memberships[0];
+  const activeOrg = activeMembership?.organization;
+  const isOrgAdmin = activeMembership?.role === "ADMIN";
+
+  useEffect(() => {
+    if (!activeOrg) return;
+    setOrgDraft({
+      name: activeOrg.name,
+      rera: activeOrg.reraNumber ?? "",
+      gst: activeOrg.gstNumber ?? "",
+    });
+  }, [activeOrg?.id, activeOrg?.name, activeOrg?.reraNumber, activeOrg?.gstNumber]);
 
   const nriQuery = useQuery({
     queryKey: ["nri-profile", token],
@@ -348,7 +392,7 @@ export default function ProfilePage() {
 
   const profile = profileQuery.data;
   const role = (profile?.role ?? user?.role ?? "BUYER") as Role;
-  const orgName = orgsQuery.data?.[0]?.name ?? "";
+  const orgName = activeOrg?.name ?? orgsQuery.data?.[0]?.name ?? "";
 
   const loading = profileQuery.isLoading;
   const hasError = profileQuery.isError;
@@ -467,6 +511,59 @@ export default function ProfilePage() {
     }
   }
 
+  async function switchOrganization(organizationId: string) {
+    if (!token || organizationId === activeMembership?.organizationId) return;
+    setSwitchingOrg(true);
+    try {
+      await apiFetch("/organizations/switch", {
+        method: "POST",
+        token,
+        body: JSON.stringify({ organizationId }),
+      });
+      await queryClient.invalidateQueries({ queryKey: ["orgs", token] });
+      await refreshProfile();
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("ar-buildwel-orgs-changed"));
+      }
+      toast.success("Active organization updated");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not switch organization");
+    } finally {
+      setSwitchingOrg(false);
+    }
+  }
+
+  async function saveOrganizationDetails() {
+    if (!token || !activeOrg?.id || !isOrgAdmin) return;
+    const name = orgDraft.name.trim();
+    if (!name || name.length < 2) {
+      toast.error("Organization name must be at least 2 characters.");
+      return;
+    }
+    try {
+      setSavingOrg(true);
+      await apiFetch(`/organizations/${activeOrg.id}`, {
+        method: "PATCH",
+        token,
+        body: JSON.stringify({
+          name,
+          reraNumber: orgDraft.rera.trim() || null,
+          gstNumber: orgDraft.gst.trim() || null,
+        }),
+      });
+      await queryClient.invalidateQueries({ queryKey: ["orgs", token] });
+      await refreshProfile();
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("ar-buildwel-orgs-changed"));
+      }
+      toast.success("Organization saved");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save organization");
+    } finally {
+      setSavingOrg(false);
+    }
+  }
+
   if (!token) {
     return (
       <EmptyState
@@ -503,18 +600,18 @@ export default function ProfilePage() {
 
       <div className="overflow-x-auto border-b border-[#1a1a1a]">
         <div className="flex min-w-max gap-6">
-          {(["profile", "credentials", "preferences", "security"] as TabId[]).map((tab) => (
+          {PROFILE_TABS.map(({ id, label }) => (
             <button
-              key={tab}
+              key={id}
               type="button"
-              onClick={() => setActiveTab(tab)}
-              className={`border-b-2 pb-2 text-sm capitalize transition ${
-                activeTab === tab
+              onClick={() => setActiveTab(id)}
+              className={`border-b-2 pb-2 text-sm transition ${
+                activeTab === id
                   ? "border-b-[#00C49A] text-[#00C49A]"
                   : "border-b-transparent text-[#888888] hover:text-[#cccccc]"
               }`}
             >
-              {tab}
+              {label}
             </button>
           ))}
         </div>
@@ -715,9 +812,9 @@ export default function ProfilePage() {
               <div>
                 <p className="mb-1 text-xs text-[#888]">Cities you operate in</p>
                 <div className="mb-2 flex flex-wrap gap-2">
-                  {brokerCities.map((city) => (
+                  {brokerCities.map((city, idx) => (
                     <button
-                      key={city}
+                      key={`${city}-${idx}`}
                       type="button"
                       disabled={!isEditingCredentials}
                       onClick={() => isEditingCredentials && setBrokerCities((c) => c.filter((x) => x !== city))}
@@ -880,9 +977,9 @@ export default function ProfilePage() {
               <div className="sm:col-span-2">
                 <p className="text-[#888]">Geography</p>
                 <div className="mt-2 flex flex-wrap gap-2">
-                  {extras.hniGeography.map((c) => (
+                  {extras.hniGeography.map((c, idx) => (
                     <button
-                      key={c}
+                      key={`${c}-${idx}`}
                       type="button"
                       disabled={!isEditingCredentials}
                       onClick={() => setExtras((p) => ({ ...p, hniGeography: p.hniGeography.filter((x) => x !== c) }))}
@@ -989,9 +1086,9 @@ export default function ProfilePage() {
               <div>
                 <p className="text-[#888]">Preferred cities</p>
                 <div className="mt-2 flex flex-wrap gap-2">
-                  {extras.buyerCities.map((c) => (
+                  {extras.buyerCities.map((c, idx) => (
                     <button
-                      key={c}
+                      key={`${c}-${idx}`}
                       type="button"
                       disabled={!isEditingCredentials}
                       onClick={() => setExtras((p) => ({ ...p, buyerCities: p.buyerCities.filter((x) => x !== c) }))}
@@ -1061,9 +1158,9 @@ export default function ProfilePage() {
               <div>
                 <p className="text-[#888]">Listing cities</p>
                 <div className="mt-2 flex flex-wrap gap-2">
-                  {extras.sellerCities.map((c) => (
+                  {extras.sellerCities.map((c, idx) => (
                     <button
-                      key={c}
+                      key={`${c}-${idx}`}
                       type="button"
                       disabled={!isEditingCredentials}
                       onClick={() => setExtras((p) => ({ ...p, sellerCities: p.sellerCities.filter((x) => x !== c) }))}
@@ -1241,6 +1338,121 @@ export default function ProfilePage() {
             </div>
           ) : null}
         </section>
+      ) : null}
+
+      {activeTab === "organization" ? (
+        <div className="space-y-4">
+          {orgsQuery.isLoading ? (
+            <p className="text-sm text-[#888]">Loading organizations…</p>
+          ) : memberships.length === 0 ? (
+            <section className="rounded-xl border border-[#1a1a1a] bg-[#111111] p-6">
+              <h2 className="text-base font-semibold text-white">Organization workspace</h2>
+              <p className="mt-2 text-sm text-[#888]">
+                You are not part of a firm workspace yet. Create one to list properties under a brand, invite agents,
+                and share deals.
+              </p>
+              <Link
+                href="/organizations/setup"
+                className="mt-4 inline-flex items-center gap-2 rounded-lg bg-[#00C49A] px-4 py-2 text-sm font-medium text-black hover:opacity-95"
+              >
+                <Building2 className="h-4 w-4" />
+                Set up organization
+              </Link>
+            </section>
+          ) : (
+            <>
+              <section className="rounded-xl border border-[#1a1a1a] bg-[#111111] p-6">
+                <h2 className="text-base font-semibold text-white">Active workspace</h2>
+                <p className="mt-1 text-sm text-[#888]">
+                  Listings and team actions use your active organization. Switch if you belong to more than one firm.
+                </p>
+                {memberships.length > 1 ? (
+                  <label className="mt-4 block text-sm">
+                    <span className="text-xs text-[#888]">Organization</span>
+                    <select
+                      disabled={switchingOrg}
+                      value={activeMembership?.organizationId ?? ""}
+                      onChange={(e) => void switchOrganization(e.target.value)}
+                      className="mt-1 w-full max-w-md rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] px-3 py-2.5 text-white [color-scheme:dark] disabled:opacity-60"
+                    >
+                      {memberships.map((m) => (
+                        <option key={m.organizationId} value={m.organizationId}>
+                          {m.organization.name}
+                          {m.isActive ? " (active)" : ""} · {m.role}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : (
+                  <p className="mt-3 inline-flex items-center gap-2 text-sm text-[#ccc]">
+                    <Building2 className="h-4 w-4 text-[#00C49A]" />
+                    {activeOrg?.name}
+                    <span className="rounded border border-[#2a2a2a] px-2 py-0.5 text-[11px] text-[#888]">
+                      {activeMembership?.role}
+                    </span>
+                  </p>
+                )}
+                <Link
+                  href="/organizations/setup"
+                  className="mt-4 inline-flex text-sm text-[#00C49A] hover:underline"
+                >
+                  Open full organization setup (invites, new firms)
+                </Link>
+              </section>
+
+              <section className="rounded-xl border border-[#1a1a1a] bg-[#111111] p-6">
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <h2 className="text-base font-semibold text-white">Firm details</h2>
+                    <p className="text-sm text-[#888]">Legal name, RERA, and GST on record for this workspace.</p>
+                  </div>
+                  {!isOrgAdmin ? (
+                    <span className="shrink-0 text-[11px] text-amber-200/90">View only — ask an org admin to edit.</span>
+                  ) : null}
+                </div>
+                <div className="mt-4 grid gap-4 text-sm sm:grid-cols-2">
+                  <label className="block sm:col-span-2">
+                    <span className="text-xs text-[#888]">Firm / organization name</span>
+                    <input
+                      value={orgDraft.name}
+                      disabled={!isOrgAdmin || savingOrg}
+                      onChange={(e) => setOrgDraft((p) => ({ ...p, name: e.target.value }))}
+                      className="mt-1 w-full rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] px-3 py-2.5 text-white disabled:opacity-70"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-xs text-[#888]">RERA registration (optional)</span>
+                    <input
+                      value={orgDraft.rera}
+                      disabled={!isOrgAdmin || savingOrg}
+                      onChange={(e) => setOrgDraft((p) => ({ ...p, rera: e.target.value }))}
+                      className="mt-1 w-full rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] px-3 py-2.5 text-white disabled:opacity-70"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-xs text-[#888]">GST number (optional)</span>
+                    <input
+                      value={orgDraft.gst}
+                      disabled={!isOrgAdmin || savingOrg}
+                      onChange={(e) => setOrgDraft((p) => ({ ...p, gst: e.target.value }))}
+                      className="mt-1 w-full rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] px-3 py-2.5 text-white disabled:opacity-70"
+                    />
+                  </label>
+                </div>
+                {isOrgAdmin ? (
+                  <button
+                    type="button"
+                    disabled={savingOrg}
+                    onClick={() => void saveOrganizationDetails()}
+                    className="mt-4 rounded-lg bg-[#00C49A] px-5 py-2 text-sm font-semibold text-black hover:bg-[#00A882] disabled:opacity-60"
+                  >
+                    {savingOrg ? "Saving…" : "Save organization"}
+                  </button>
+                ) : null}
+              </section>
+            </>
+          )}
+        </div>
       ) : null}
 
       {activeTab === "preferences" ? (

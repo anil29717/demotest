@@ -1,8 +1,16 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtPayloadUser } from '../common/decorators/current-user.decorator';
-import { OrgRole } from '@prisma/client';
+import { OrgRole, UserRole } from '@prisma/client';
 import {
   IsEnum,
   IsInt,
@@ -13,6 +21,8 @@ import {
   Min,
 } from 'class-validator';
 import { OrganizationsService } from './organizations.service';
+import { Roles } from '../common/decorators/roles.decorator';
+import { RolesGuard } from '../common/guards/roles.guard';
 
 class CreateOrgDto {
   @IsString()
@@ -62,8 +72,22 @@ class SwitchOrgDto {
   organizationId!: string;
 }
 
+class UpdateOrgDto {
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  reraNumber?: string | null;
+
+  @IsOptional()
+  @IsString()
+  gstNumber?: string | null;
+}
+
 @Controller('organizations')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class OrganizationsController {
   constructor(private readonly organizations: OrganizationsService) {}
 
@@ -97,8 +121,31 @@ export class OrganizationsController {
     return this.organizations.listInvitesForUser(user.sub);
   }
 
+  @Post('invites/:id/revoke')
+  async revokeInvite(
+    @CurrentUser() user: JwtPayloadUser,
+    @Param('id') inviteId: string,
+  ) {
+    return this.organizations.revokeInvite(user.sub, inviteId);
+  }
+
   @Post('join')
   async join(@CurrentUser() user: JwtPayloadUser, @Body() dto: JoinOrgDto) {
     return this.organizations.joinOrganization(user.sub, dto);
+  }
+
+  @Patch(':id')
+  async update(
+    @CurrentUser() user: JwtPayloadUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateOrgDto,
+  ) {
+    return this.organizations.updateOrganization(user.sub, id, dto);
+  }
+
+  @Get('admin/list')
+  @Roles(UserRole.ADMIN)
+  async adminList() {
+    return this.organizations.adminListOrganizations();
   }
 }

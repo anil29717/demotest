@@ -2,18 +2,29 @@
 
 import { AlertCircle, AlertTriangle, CheckCircle, ChevronDown, ShieldCheck } from "lucide-react";
 import Link from "next/link";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import toast from "react-hot-toast";
 import { useAuth } from "@/contexts/auth-context";
 import { apiFetch } from "@/lib/api";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageSkeleton } from "@/components/ui/skeleton";
 
-type Item = { id: string; severity: string; title: string; body: string };
+type Item = {
+  id: string;
+  severity: string;
+  title: string;
+  body: string;
+  dealId?: string | null;
+  kind?: string;
+  resolvable?: boolean;
+};
 
 export default function CompliancePage() {
   const { token, user } = useAuth();
+  const queryClient = useQueryClient();
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
   const { data: items = [], isLoading: loading } = useQuery({
     queryKey: ["compliance", token],
     enabled: Boolean(token),
@@ -25,6 +36,23 @@ export default function CompliancePage() {
     },
     staleTime: 1000 * 60 * 2,
   });
+
+  async function resolveItem(item: Item) {
+    if (!token || !item.resolvable) return;
+    setResolvingId(item.id);
+    try {
+      await apiFetch(`/compliance/alerts/${item.id}/resolve`, {
+        method: "POST",
+        token,
+      });
+      toast.success("Marked complete");
+      await queryClient.invalidateQueries({ queryKey: ["compliance", token] });
+    } catch {
+      toast.error("Could not resolve");
+    } finally {
+      setResolvingId(null);
+    }
+  }
 
   const groups = useMemo(() => {
     const inst = user?.role === "INSTITUTIONAL_BUYER" || user?.role === "INSTITUTIONAL_SELLER";
@@ -117,7 +145,7 @@ export default function CompliancePage() {
         <div className="rounded-xl border border-[#1f1f1f] bg-[#111111] p-3">
           <p className="inline-flex items-center gap-1 text-xs text-[#00C49A]">
             <CheckCircle className="h-3 w-3" />
-            Clear
+            Low
           </p>
           <p className="mt-1 text-xl text-white">{items.filter((i) => String(i.severity).toLowerCase() === "low").length}</p>
         </div>
@@ -148,9 +176,30 @@ export default function CompliancePage() {
                     >
                       <p className="font-medium text-zinc-200">{i.title}</p>
                       <p className="mt-1 text-zinc-400">{i.body}</p>
-                      <div className="mt-2 flex items-center justify-between text-xs text-zinc-500">
+                      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-zinc-500">
                         <span>{String(i.severity).toUpperCase()}</span>
-                        <span className="rounded border border-[#333333] px-2 py-0.5 text-[#888888]">Track</span>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {i.dealId ? (
+                            <Link
+                              href={`/deals/${i.dealId}`}
+                              className="rounded border border-[#333333] px-2 py-0.5 text-[#00C49A] hover:border-[#00C49A]"
+                            >
+                              Deal
+                            </Link>
+                          ) : null}
+                          {i.resolvable ? (
+                            <button
+                              type="button"
+                              disabled={resolvingId === i.id}
+                              onClick={() => void resolveItem(i)}
+                              className="rounded border border-zinc-600 px-2 py-0.5 text-zinc-300 hover:border-[#00C49A] hover:text-[#00C49A] disabled:opacity-40"
+                            >
+                              {resolvingId === i.id ? "…" : "Resolve"}
+                            </button>
+                          ) : (
+                            <span className="rounded border border-[#333333] px-2 py-0.5 text-[#888888]">Advisory</span>
+                          )}
+                        </div>
                       </div>
                     </motion.li>
                   ))
@@ -176,11 +225,30 @@ export default function CompliancePage() {
             >
               <p className="font-medium text-zinc-200">{i.title}</p>
               <p className="mt-1 text-zinc-400">{i.body}</p>
-              <div className="mt-2 flex items-center justify-between text-xs text-zinc-500">
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-zinc-500">
                 <span>{String(i.severity).toUpperCase()}</span>
-                <button type="button" className="rounded border border-zinc-700 px-2 py-1">
-                  Resolve
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  {i.dealId ? (
+                    <Link
+                      href={`/deals/${i.dealId}`}
+                      className="rounded border border-zinc-600 px-2 py-1 text-[#00C49A] hover:border-[#00C49A]"
+                    >
+                      Open deal
+                    </Link>
+                  ) : null}
+                  {i.resolvable ? (
+                    <button
+                      type="button"
+                      disabled={resolvingId === i.id}
+                      onClick={() => void resolveItem(i)}
+                      className="rounded border border-zinc-700 px-2 py-1 hover:border-[#00C49A] disabled:opacity-40"
+                    >
+                      {resolvingId === i.id ? "…" : "Resolve"}
+                    </button>
+                  ) : (
+                    <span className="text-zinc-600">Advisory</span>
+                  )}
+                </div>
               </div>
             </li>
           ))}

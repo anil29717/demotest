@@ -3,6 +3,12 @@ export type NormalizedNotificationPrefs = {
   dailyDigest: boolean;
   matchAlerts: boolean;
   slaWarnings: boolean;
+  /** Institutional / confidentiality requests */
+  ndaAlerts: boolean;
+  /** Pipeline stage changes on deals */
+  dealAlerts: boolean;
+  /** SLA warnings, system/OCR/WhatsApp admin pings, digest summaries */
+  alertAlerts: boolean;
   digestHourLocal: number | null;
   digestMinuteLocal: number | null;
   /** When true and `whatsappDigestTo` is valid E.164, daily digest cron may mirror summary via Cloud API. */
@@ -43,10 +49,20 @@ export function normalizeNotificationPrefs(
     raw && typeof raw === 'object' && !Array.isArray(raw)
       ? (raw as Record<string, unknown>)
       : {};
+  const slaOn = o.slaWarnings !== false;
+  const nda =
+    o.ndaAlerts === undefined ? slaOn !== false : o.ndaAlerts !== false;
+  const deal =
+    o.dealAlerts === undefined ? slaOn !== false : o.dealAlerts !== false;
+  const alert =
+    o.alertAlerts === undefined ? slaOn !== false : o.alertAlerts !== false;
   return {
     dailyDigest: o.dailyDigest !== false,
     matchAlerts: o.matchAlerts !== false,
-    slaWarnings: o.slaWarnings !== false,
+    slaWarnings: slaOn,
+    ndaAlerts: nda,
+    dealAlerts: deal,
+    alertAlerts: alert,
     digestHourLocal: clampHour(o.digestHourLocal),
     digestMinuteLocal: clampMinute(o.digestMinuteLocal),
     whatsappDigest: o.whatsappDigest === true,

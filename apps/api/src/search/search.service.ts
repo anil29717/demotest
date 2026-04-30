@@ -7,6 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { DealType, Prisma, PropertyType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import type {
   SearchPropertiesQueryDto,
   SearchSortMode,
@@ -135,6 +136,30 @@ function hasTextQuery(f: PropertySearchFilters): boolean {
   return Boolean((f.q ?? '').trim());
 }
 
+/** Split free-text `q` into tokens; hyphenated words become multiple tokens (e.g. sec-53 → sec, 53). */
+function tokenizeSearchQuery(raw: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const push = (tok: string) => {
+    const t = tok.trim();
+    if (t.length < 2 && !/^\d{2,}$/.test(t)) return;
+    if (!t.length) return;
+    const k = t.toLowerCase();
+    if (seen.has(k)) return;
+    seen.add(k);
+    out.push(t);
+  };
+  for (const word of raw.trim().split(/[\s,]+/)) {
+    if (!word) continue;
+    if (/-/.test(word)) {
+      for (const sub of word.split(/-+/).filter(Boolean)) push(sub);
+    } else {
+      push(word);
+    }
+  }
+  return out;
+}
+
 /**
  * Phase 1: PostgreSQL `contains` fallback. Phase 2: optional Elasticsearch when `ELASTICSEARCH_URL` is set.
  */
@@ -146,6 +171,7 @@ export class SearchService {
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
     private readonly propertySearchIndex: PropertySearchIndexService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async searchPropertiesQuery(dto: SearchPropertiesQueryDto) {
@@ -199,14 +225,14 @@ export class SearchService {
         const hit = await this.prisma.property.findFirst({ where });
         if (!hit) continue;
         if (row.userId === property.postedById) continue;
-        await this.prisma.notification.create({
-          data: {
-            userId: row.userId,
-            channel: 'in_app',
-            title: 'Saved search match',
-            body: `A new listing matches your saved search (“${property.title.slice(0, 80)}”).`,
-          },
-        });
+        try {
+          await this.notifications.notifySavedSearchMatch(
+            row.userId,
+            property.title,
+          );
+        } catch {
+          /* best-effort */
+        }
       }
     } catch (err) {
       this.logger.warn(
@@ -361,13 +387,21 @@ export class SearchService {
       and.push({ distressedLabel: filters.distressedLabel });
     }
     if (trimmed) {
-      and.push({
-        OR: [
-          { title: { contains: trimmed, mode: 'insensitive' } },
-          { city: { contains: trimmed, mode: 'insensitive' } },
-          { localityPublic: { contains: trimmed, mode: 'insensitive' } },
-        ],
-      });
+      let tokens = tokenizeSearchQuery(trimmed);
+      if (tokens.length === 0) {
+        tokens = trimmed.length ? [trimmed] : [];
+      }
+      for (const tok of tokens) {
+        and.push({
+          OR: [
+            { title: { contains: tok, mode: 'insensitive' } },
+            { city: { contains: tok, mode: 'insensitive' } },
+            { localityPublic: { contains: tok, mode: 'insensitive' } },
+            { areaPublic: { contains: tok, mode: 'insensitive' } },
+            { description: { contains: tok, mode: 'insensitive' } },
+          ],
+        });
+      }
     }
 
     return {
@@ -416,20 +450,26 @@ export class SearchService {
     const must: Record<string, unknown>[] = [];
     const trimmed = (filters.q ?? '').trim();
     if (trimmed) {
-      must.push({
-        multi_match: {
-          query: trimmed,
-          fields: [
-            'title^2',
-            'description',
-            'city',
-            'areaPublic',
-            'localityPublic',
-          ],
-          type: 'best_fields',
-          fuzziness: 'AUTO',
-        },
-      });
+      let tokens = tokenizeSearchQuery(trimmed);
+      if (tokens.length === 0) {
+        tokens = trimmed.length ? [trimmed] : [];
+      }
+      for (const tok of tokens) {
+        must.push({
+          multi_match: {
+            query: tok,
+            fields: [
+              'title^2',
+              'description',
+              'city',
+              'areaPublic',
+              'localityPublic',
+            ],
+            type: 'best_fields',
+            fuzziness: 'AUTO',
+          },
+        });
+      }
     }
 
     const innerBool: Record<string, unknown> = {

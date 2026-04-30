@@ -1,5 +1,4 @@
-import { IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
-import { DealStage } from '@prisma/client';
+import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 export class CreateDealDto {
   @IsString()
@@ -18,7 +17,5 @@ export class CreateDealDto {
   @IsString()
   institutionId?: string;
 
-  @IsOptional()
-  @IsEnum(DealStage)
-  stage?: DealStage;
+  // Stage is intentionally not user-settable. New deals always start at LEAD.
 }

@@ -23,6 +23,13 @@ type Inst = {
   createdAt?: string;
 };
 type Deal = { id: string; stage: string; valueInr?: unknown };
+type NdaIncoming = {
+  id: string;
+  status: "PENDING" | "APPROVED" | "REJECTED" | string;
+  requestedAt?: string | null;
+  user?: { id: string; name: string | null; role: string | null };
+  institution?: { id: string; institutionName: string; city: string } | null;
+};
 
 export function InstitutionalSellerDashboardView() {
   const { token, user } = useAuth();
@@ -30,24 +37,29 @@ export function InstitutionalSellerDashboardView() {
   const [institutions, setInstitutions] = useState<Inst[]>([]);
   const [deals, setDeals] = useState<Deal[]>([]);
   const [props, setProps] = useState<{ id: string; status?: string; createdAt?: string }[]>([]);
+  const [ndaIncoming, setNdaIncoming] = useState<NdaIncoming[]>([]);
   const now = new Date();
   const greeting = now.getHours() < 12 ? "Good morning" : now.getHours() < 17 ? "Good afternoon" : "Good evening";
 
   useEffect(() => {
     if (!token) return;
     let cancelled = false;
-    setLoading(true);
-    void (async () => {
+    let firstLoad = true;
+
+    const load = async () => {
+      if (firstLoad && !cancelled) setLoading(true);
       try {
-        const [inst, dls, mine] = await Promise.all([
-          apiFetch<Inst[]>("/institutions", { token }).catch(() => []),
+        const [inst, dls, mine, incoming] = await Promise.all([
+          apiFetch<Inst[]>("/institutions/me", { token }).catch(() => []),
           apiFetch<Deal[]>("/deals", { token }).catch(() => []),
           apiFetch<{ id: string; status?: string; createdAt?: string }[]>("/properties/mine", { token }).catch(() => []),
+          apiFetch<NdaIncoming[]>("/nda/incoming?status=PENDING", { token }).catch(() => []),
         ]);
         if (!cancelled) {
           setInstitutions(Array.isArray(inst) ? inst : []);
           setDeals(Array.isArray(dls) ? dls : []);
           setProps(Array.isArray(mine) ? mine : []);
+          setNdaIncoming(Array.isArray(incoming) ? incoming : []);
         }
       } catch (e) {
         if (!cancelled) {
@@ -56,10 +68,17 @@ export function InstitutionalSellerDashboardView() {
         }
       } finally {
         if (!cancelled) setLoading(false);
+        firstLoad = false;
       }
-    })();
+    };
+
+    void load();
+    const id = window.setInterval(() => {
+      void load();
+    }, 15000);
     return () => {
       cancelled = true;
+      window.clearInterval(id);
     };
   }, [token]);
 
@@ -105,7 +124,7 @@ export function InstitutionalSellerDashboardView() {
         <StatCard
           icon={FileText}
           label="NDA requests"
-          value={0}
+          value={ndaIncoming.length}
           iconClassName="text-[#5BAD8F]"
           subtext={<span className="text-[#888888]">Review incoming buyers</span>}
         />
@@ -148,13 +167,29 @@ export function InstitutionalSellerDashboardView() {
             <p className="mt-1 text-xs text-[#888888]">Buyers requesting access to your institution data.</p>
             <p className="mt-3 text-xs text-[#555555]">Approving access shares full details and the data room.</p>
             <div className="mt-4">
-              <EmptyState
-                icon={FileText}
-                title="No NDA requests in queue"
-                subtitle="When buyers request access, they will appear here for your decision."
-                actionHref="/institutions"
-                actionLabel="Manage listing"
-              />
+              {ndaIncoming.length ? (
+                <ul className="space-y-2">
+                  {ndaIncoming.slice(0, 4).map((r) => (
+                    <li key={r.id} className="rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] p-3">
+                      <p className="text-sm text-white">{r.user?.name || "Buyer"} requested access</p>
+                      <p className="mt-1 text-xs text-[#888888]">
+                        {r.institution?.institutionName || "Institution"} · {r.institution?.city || "—"}
+                      </p>
+                      <p className="mt-1 text-[11px] text-[#666]">
+                        {r.requestedAt ? `Requested ${timeAgo(r.requestedAt)}` : "Requested recently"}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <EmptyState
+                  icon={FileText}
+                  title="No NDA requests in queue"
+                  subtitle="When buyers request access, they will appear here for your decision."
+                  actionHref="/institutions"
+                  actionLabel="Manage listing"
+                />
+              )}
             </div>
           </motion.section>
 

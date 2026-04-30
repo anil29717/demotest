@@ -118,6 +118,16 @@ class BookUnitDto {
   amount?: number;
 }
 
+class UpdateBookingStatusDto {
+  @IsString()
+  @IsNotEmpty()
+  status!: 'CONFIRMED' | 'CANCELLED';
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
+
 @Controller('builder')
 export class BuilderController {
   constructor(private readonly builder: BuilderService) {}
@@ -198,5 +208,22 @@ export class BuilderController {
   @Roles(UserRole.BUILDER, UserRole.BUYER, UserRole.ADMIN)
   listBookings(@CurrentUser() user: JwtPayloadUser) {
     return this.builder.listBookings(user.sub, user.role);
+  }
+
+  @Post('bookings/:id/status')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.BUILDER, UserRole.ADMIN)
+  updateBookingStatus(
+    @CurrentUser() user: JwtPayloadUser,
+    @Param('id') bookingId: string,
+    @Body() dto: UpdateBookingStatusDto,
+  ) {
+    return this.builder.updateBookingStatus(
+      bookingId,
+      user.sub,
+      user.role,
+      dto.status,
+      dto.notes,
+    );
   }
 }

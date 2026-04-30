@@ -131,7 +131,7 @@ export const SIDEBAR_ITEMS: NavItem[] = [
   },
   {
     href: "/broker-network",
-    label: "Broker network",
+    label: "Co-Broker (Manual)",
     icon: "bar-chart-3",
     roles: ["ADMIN", "BROKER", "NRI", "HNI", "BUILDER", "INSTITUTIONAL_BUYER", "INSTITUTIONAL_SELLER"],
   },
@@ -215,6 +215,7 @@ export const SIDEBAR_ITEMS: NavItem[] = [
   { href: "/admin/api-usage", label: "API usage (admin)", icon: "bar-chart-3", roles: ["ADMIN"] },
   { href: "/api-product", label: "API product", icon: "rocket", roles: ["ADMIN", "BROKER", "BUILDER"] },
   { href: "/admin/fraud", label: "Fraud (admin)", icon: "shield-check", roles: ["ADMIN"] },
+  { href: "/admin/nda", label: "NDA (admin)", icon: "shield-check", roles: ["ADMIN"] },
   { href: "/admin/audit", label: "Audit (admin)", icon: "scroll-text", roles: ["ADMIN"] },
   { href: "/admin/reviews", label: "Reviews (admin)", icon: "star", roles: ["ADMIN"] },
 ];
@@ -257,7 +258,7 @@ export const BROKER_SIDEBAR_SECTIONS: BrokerSidebarSection[] = [
   {
     category: "Network",
     items: [
-      { href: "/broker-network", label: "Broker network", icon: "users" },
+      { href: "/broker-network", label: "Co-Broker (Manual)", icon: "users" },
       { href: "/partners", label: "Partners", icon: "handshake" },
     ],
   },
@@ -309,7 +310,7 @@ export const NRI_SIDEBAR_SECTIONS: SellerSidebarSection[] = [
   },
   {
     category: "Network",
-    items: [{ href: "/broker-network", label: "Broker network", icon: "bar-chart-3" }],
+    items: [{ href: "/broker-network", label: "Co-Broker (Manual)", icon: "bar-chart-3" }],
   },
   {
     category: "Services",
@@ -385,7 +386,7 @@ export const HNI_SIDEBAR_SECTIONS: BrokerSidebarSection[] = [
   },
   {
     category: "Network",
-    items: [{ href: "/broker-network", label: "Broker network", icon: "bar-chart-3" }],
+    items: [{ href: "/broker-network", label: "Co-Broker (Manual)", icon: "bar-chart-3" }],
   },
   {
     category: "Services",
@@ -424,7 +425,7 @@ export const INSTITUTIONAL_BUYER_SIDEBAR_SECTIONS: BrokerSidebarSection[] = [
   },
   {
     category: "Network",
-    items: [{ href: "/broker-network", label: "Broker network", icon: "bar-chart-3" }],
+    items: [{ href: "/broker-network", label: "Co-Broker (Manual)", icon: "bar-chart-3" }],
   },
   {
     category: "Services",
@@ -463,7 +464,7 @@ export const INSTITUTIONAL_SELLER_SIDEBAR_SECTIONS: BrokerSidebarSection[] = [
   },
   {
     category: "Network",
-    items: [{ href: "/broker-network", label: "Broker network", icon: "bar-chart-3" }],
+    items: [{ href: "/broker-network", label: "Co-Broker (Manual)", icon: "bar-chart-3" }],
   },
   {
     category: "Services",
@@ -501,7 +502,7 @@ export const BUILDER_SIDEBAR_SECTIONS: BrokerSidebarSection[] = [
   {
     category: "Network",
     items: [
-      { href: "/broker-network", label: "Broker network", icon: "users" },
+      { href: "/broker-network", label: "Co-Broker (Manual)", icon: "users" },
       { href: "/partners", label: "Partners", icon: "handshake" },
     ],
   },

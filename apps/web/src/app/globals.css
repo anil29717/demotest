@@ -19,6 +19,14 @@ body {
   font-family: "Satoshi", "Cabinet Grotesk", Arial, Helvetica, sans-serif;
 }
 
+/* Workspace app shell: avoid cream body showing through on scroll / overscroll */
+html.workspace-shell,
+html.workspace-shell body {
+  background-color: #0a0a0a;
+  color: #fafafa;
+  color-scheme: dark;
+}
+
 h1,
 h2,
 h3,

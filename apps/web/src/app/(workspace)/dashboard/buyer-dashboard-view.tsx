@@ -29,10 +29,31 @@ type DashboardSummary = {
   recentMatches: {
     id: string;
     matchScore: number;
-    property: { id: string; title: string; city: string; price?: unknown; imageUrls?: string[] };
+    property: {
+      id: string;
+      title: string;
+      city: string;
+      price?: unknown;
+      imageUrls?: string[];
+      images?: string[];
+      imageUrl?: string | null;
+    };
     requirement: { id: string; city: string; tag: string };
   }[];
 };
+
+function resolvePropertyImageUrl(property: {
+  images?: string[];
+  imageUrls?: string[];
+  imageUrl?: string | null;
+}) {
+  return (
+    property.images?.[0]?.trim() ||
+    property.imageUrls?.[0]?.trim() ||
+    property.imageUrl?.trim() ||
+    ""
+  );
+}
 
 type ReqRow = {
   id: string;
@@ -161,11 +182,22 @@ export function BuyerDashboardView() {
             </div>
             {recent.length ? (
               <ul className="divide-y divide-[#1a1a1a]">
-                {recent.slice(0, 5).map((m) => (
+                {recent.slice(0, 5).map((m) => {
+                  const imageUrl = resolvePropertyImageUrl(m.property);
+                  return (
                   <li key={m.id} className="flex gap-3 py-3">
-                    {m.property.imageUrls?.[0] ? (
+                    {imageUrl ? (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={m.property.imageUrls[0]} alt="" className="h-14 w-14 shrink-0 rounded-lg object-cover" />
+                      <img
+                        src={imageUrl}
+                        alt=""
+                        className="h-14 w-14 shrink-0 rounded-lg object-cover"
+                        loading="lazy"
+                        onError={(e) => {
+                          e.currentTarget.onerror = null;
+                          e.currentTarget.src = "/placeholder-property.png";
+                        }}
+                      />
                     ) : (
                       <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-[#0d0d0d]">
                         <Building2 className="h-5 w-5 text-[#444444]" />
@@ -188,7 +220,7 @@ export function BuyerDashboardView() {
                       </Link>
                     </div>
                   </li>
-                ))}
+                )})}
               </ul>
             ) : (
               <EmptyState

@@ -10,6 +10,7 @@
   },
   "scripts": {
     "postinstall": "npm run build --workspace=@ar-buildwel/shared",
+    "dev": "concurrently -k -n web,api -c cyan,magenta \"npm run dev:web\" \"npm run dev:api\"",
     "dev:web": "npm run dev --workspace=web",
     "dev:web:clean": "npm run clean --workspace=web && npm run dev --workspace=web",
     "dev:api": "npm run start:dev --workspace=api",
@@ -22,5 +23,8 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
   }
 }

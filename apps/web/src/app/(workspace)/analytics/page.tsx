@@ -23,6 +23,32 @@ import { StatCard } from "@/components/ui/stat-card";
 
 type HniDeal = { id: string; stage: string; valueInr?: unknown; property?: { city?: string } | null };
 
+type AreaDemandRow = { city: string | null; _count: number | { _all: number } };
+
+function groupByCount(row: { _count: number | { _all: number } }): number {
+  const c = row._count;
+  return typeof c === "number" ? c : c._all;
+}
+
+/** Merge rows that normalize to the same city (avoids duplicate React keys + double-count). */
+function mergeAreaDemand(
+  rows: AreaDemandRow[],
+  countFn: (row: { _count: number | { _all: number } }) => number,
+): { city: string; count: number }[] {
+  const byNorm = new Map<string, { city: string; count: number }>();
+  for (const r of rows) {
+    const label = (r.city ?? "Unknown").trim() || "Unknown";
+    const norm = label.toLowerCase().replace(/\s+/g, " ");
+    const n = countFn(r as { _count: number | { _all: number } });
+    const prev = byNorm.get(norm);
+    if (prev) prev.count += n;
+    else byNorm.set(norm, { city: label, count: n });
+  }
+  return Array.from(byNorm.values())
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 8);
+}
+
 function HniAnalyticsView() {
   const { token } = useAuth();
   const [deals, setDeals] = useState<HniDeal[]>([]);
@@ -152,6 +178,7 @@ export default function AnalyticsPage() {
     conversionRate: number;
   } | null>(null);
   const [sellerSummary, setSellerSummary] = useState<{ myListings?: number; matches?: number; deals?: number } | null>(null);
+  const [areaRows, setAreaRows] = useState<{ city: string; count: number }[]>([]);
 
   async function load(organizationId: string) {
     if (!token || !organizationId.trim()) return;
@@ -179,20 +206,36 @@ export default function AnalyticsPage() {
         setData(stages);
         return true;
       }
-      const [nextKpi, orgs, dealsData] = await Promise.all([
+      const [nextKpi, orgs, dealsData, areaRaw] = await Promise.all([
         apiFetch<{
           leads: number;
           deals: number;
           closedDeals: number;
           matchCount: number;
           conversionRate: number;
-        }>("/analytics/broker/me", { token: token ?? undefined }),
+        }>("/analytics/broker/me", { token: token ?? undefined }).catch(() => ({
+          leads: 0,
+          deals: 0,
+          closedDeals: 0,
+          matchCount: 0,
+          conversionRate: 0,
+        })),
         apiFetch<{ id: string; name: string; role: string }[]>("/organizations/mine", { token: token ?? undefined }),
-        apiFetch<{ stages: { stage: string; _count: number }[] }>("/analytics/deals", { token: token ?? undefined }).catch(() => ({ stages: [] })),
+        apiFetch<{ stages: { stage: string; _count: number | { _all: number } }[] }>("/analytics/deals", { token: token ?? undefined }).catch(
+          () => ({ stages: [] }),
+        ),
+        apiFetch<AreaDemandRow[]>("/analytics/area-demand", { token: token ?? undefined }).catch(() => []),
       ]);
       setKpi(nextKpi);
+      const demand = mergeAreaDemand(
+        Array.isArray(areaRaw) ? areaRaw : [],
+        groupByCount,
+      );
+      setAreaRows(demand);
       const firstOrgId = orgs[0]?.id;
-      if (firstOrgId) {
+      if (user?.role === "ADMIN") {
+        setData(dealsData);
+      } else if (firstOrgId) {
         await load(firstOrgId);
       } else {
         setData(dealsData);
@@ -249,12 +292,12 @@ export default function AnalyticsPage() {
           <section className="rounded-xl border border-[#1f1f1f] bg-[#111111] p-4">
             <p className="text-sm font-medium text-white">Deal funnel</p>
             <ul className="mt-3 space-y-2 text-sm">
-              {data.stages.map((s) => {
+              {data.stages.map((s, idx) => {
                 const c = s._count;
                 const n = typeof c === "number" ? c : c._all;
                 const max = Math.max(...data.stages.map((x) => (typeof x._count === "number" ? x._count : x._count._all)), 1);
                 return (
-                  <li key={s.stage}>
+                  <li key={`funnel-${s.stage}-${idx}`}>
                     <div className="flex justify-between text-xs text-[#888]"><span>{s.stage}</span><span>{n}</span></div>
                     <div className="h-2 rounded-full bg-[#1f1f1f]"><div className="h-2 rounded-full bg-[#00C49A]" style={{ width: `${(n / max) * 100}%` }} /></div>
                   </li>
@@ -265,13 +308,39 @@ export default function AnalyticsPage() {
           <section className="rounded-xl border border-[#1f1f1f] bg-[#111111] p-4">
             <p className="text-sm font-medium text-white">Recent activity</p>
             <ul className="mt-3 space-y-2 text-xs text-[#888]">
-              {data.stages.slice(0, 6).map((s) => <li key={s.stage} className="inline-flex items-center gap-2"><Activity className="h-3 w-3" />Stage activity: {s.stage}</li>)}
+              {data.stages.slice(0, 6).map((s, idx) => (
+                <li key={`activity-${s.stage}-${idx}`} className="inline-flex items-center gap-2">
+                  <Activity className="h-3 w-3" />
+                  Stage activity: {s.stage}
+                </li>
+              ))}
             </ul>
             <p className="mt-4 text-sm font-medium text-white">Top demand areas</p>
             <ul className="mt-2 space-y-2 text-xs text-[#888]">
-              {["Mumbai","Bengaluru","Delhi","Pune","Hyderabad"].map((city, idx) => (
-                <li key={city}><div className="mb-0.5 flex justify-between"><span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" />{city}</span><span>{5-idx}</span></div><div className="h-2 rounded-full bg-[#1f1f1f]"><div className="h-2 rounded-full bg-[#00C49A]" style={{ width: `${(5-idx)*18}%` }} /></div></li>
-              ))}
+              {areaRows.length ? (
+                areaRows.map((row, idx) => {
+                  const max = Math.max(areaRows[0]?.count ?? 1, 1);
+                  return (
+                    <li key={`area-demand-${row.city}-${idx}`}>
+                      <div className="mb-0.5 flex justify-between">
+                        <span className="inline-flex items-center gap-1">
+                          <MapPin className="h-3 w-3" />
+                          {row.city}
+                        </span>
+                        <span>{row.count}</span>
+                      </div>
+                      <div className="h-2 rounded-full bg-[#1f1f1f]">
+                        <div
+                          className="h-2 rounded-full bg-[#00C49A]"
+                          style={{ width: `${(row.count / max) * 100}%` }}
+                        />
+                      </div>
+                    </li>
+                  );
+                })
+              ) : (
+                <li className="text-zinc-500">No requirement data by city yet.</li>
+              )}
             </ul>
           </section>
         </div>

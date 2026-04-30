@@ -1,6 +1,6 @@
 "use client";
 
-import { ClipboardList, Flame, MapPin, Maximize2, Wallet } from "lucide-react";
+import { ClipboardList, Flame, MapPin, Maximize2, RefreshCw, Wallet } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -52,30 +52,43 @@ export default function RequirementsPage() {
   const [dealType, setDealType] = useState("ALL");
   const [urgency, setUrgency] = useState("ALL");
   const [status, setStatus] = useState("ALL");
+  const [refreshing, setRefreshing] = useState(false);
 
   const isBuyerRole = ["NRI", "BUYER", "INSTITUTIONAL_BUYER"].includes(user?.role ?? "");
 
-  const { data: mineList = [], isLoading: loadingMine } = useQuery({
+  const { data: mineList = [], isLoading: loadingMine, isFetching: fetchingMine } = useQuery({
     queryKey: ["requirements-mine", token],
     enabled: Boolean(token) && isBuyerRole,
     queryFn: () =>
       apiFetch<Req[]>("/requirements/mine?limit=20&offset=0", { token: token ?? undefined })
         .catch(() => []),
-    staleTime: 1000 * 60 * 2,
+    staleTime: 0,
+    refetchOnMount: true,
   });
 
-  const { data: allList = [], isLoading: loadingAll } = useQuery({
+  const { data: allList = [], isLoading: loadingAll, isFetching: fetchingAll } = useQuery({
     queryKey: ["requirements", user?.role, token],
     enabled: Boolean(token) && !isBuyerRole,
     queryFn: () =>
       apiFetch<Req[]>("/requirements?limit=20&offset=0", {
         token: token ?? undefined,
       }).catch(() => []),
-    staleTime: 1000 * 60 * 2,
+    staleTime: 0,
+    refetchOnMount: true,
   });
   const publicList = isBuyerRole ? mineList : allList;
   const loading = loadingMine || loadingAll;
-  void queryClient;
+  const listFetching = fetchingMine || fetchingAll;
+
+  async function refreshRequirements() {
+    setRefreshing(true);
+    try {
+      await queryClient.invalidateQueries({ queryKey: ["requirements-mine"] });
+      await queryClient.invalidateQueries({ queryKey: ["requirements"] });
+    } finally {
+      setRefreshing(false);
+    }
+  }
   const rows = useMemo(
     () =>
       publicList.filter((r) => {
@@ -118,17 +131,17 @@ export default function RequirementsPage() {
             Post requirement +
           </Link>
         </div>
-        <div className="mt-3 flex flex-wrap gap-2">
+        <div className="mt-3 flex flex-wrap gap-2 [color-scheme:dark]">
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search by city, area..."
-            className="min-w-56 rounded-lg border border-[#1a1a1a] bg-[#111111] px-3 py-2 text-sm text-white outline-none focus:border-[#00C49A]"
+            className="min-w-56 rounded-lg border border-[#1a1a1a] bg-[#111111] px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 outline-none focus:border-[#00C49A]"
           />
           <select
             value={type}
             onChange={(e) => setType(e.target.value)}
-            className="rounded-lg border border-[#1a1a1a] bg-[#111111] px-3 py-2 text-sm text-[#888]"
+            className="rounded-lg border border-[#1a1a1a] bg-[#111111] px-3 py-2 text-sm text-zinc-200"
           >
             <option value="ALL">All types</option>
             <option value="RESIDENTIAL">Residential</option>
@@ -139,7 +152,7 @@ export default function RequirementsPage() {
           <select
             value={dealType}
             onChange={(e) => setDealType(e.target.value)}
-            className="rounded-lg border border-[#1a1a1a] bg-[#111111] px-3 py-2 text-sm text-[#888]"
+            className="rounded-lg border border-[#1a1a1a] bg-[#111111] px-3 py-2 text-sm text-zinc-200"
           >
             <option value="ALL">All deals</option>
             <option value="SALE">Sale</option>
@@ -148,7 +161,7 @@ export default function RequirementsPage() {
           <select
             value={urgency}
             onChange={(e) => setUrgency(e.target.value)}
-            className="rounded-lg border border-[#1a1a1a] bg-[#111111] px-3 py-2 text-sm text-[#888]"
+            className="rounded-lg border border-[#1a1a1a] bg-[#111111] px-3 py-2 text-sm text-zinc-200"
           >
             <option value="ALL">All urgency</option>
             <option value="IMMEDIATE">Hot</option>
@@ -158,7 +171,7 @@ export default function RequirementsPage() {
           <select
             value={status}
             onChange={(e) => setStatus(e.target.value)}
-            className="rounded-lg border border-[#1a1a1a] bg-[#111111] px-3 py-2 text-sm text-[#888]"
+            className="rounded-lg border border-[#1a1a1a] bg-[#111111] px-3 py-2 text-sm text-zinc-200"
           >
             <option value="ALL">All status</option>
             <option value="ACTIVE">Active</option>
@@ -248,20 +261,72 @@ export default function RequirementsPage() {
   }
 
   return (
-    <div>
-      <div className="flex justify-between gap-4">
-        <h1 className="text-2xl font-semibold">Requirements</h1>
-        <Link href="/requirements/new" className="rounded-lg bg-teal-600 px-3 py-1.5 text-sm text-white">
-          Post requirement
-        </Link>
+    <div className="text-zinc-100 [color-scheme:dark]">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <h1 className="text-2xl font-semibold text-white">Requirements</h1>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void refreshRequirements()}
+            disabled={refreshing || listFetching}
+            className="inline-flex items-center gap-2 rounded-lg border border-zinc-600 bg-zinc-900 px-3 py-1.5 text-sm text-zinc-200 hover:border-teal-600 hover:text-teal-300 disabled:opacity-50"
+          >
+            <RefreshCw className={`h-4 w-4 ${refreshing || listFetching ? "animate-spin" : ""}`} />
+            Refresh
+          </button>
+          <Link href="/requirements/new" className="rounded-lg bg-teal-600 px-3 py-1.5 text-sm text-white">
+            Post requirement
+          </Link>
+        </div>
       </div>
 
       <div className="mt-3 flex flex-wrap gap-2">
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by city, area..." className="min-w-56 rounded-lg border border-[#1f1f1f] bg-[#111111] px-3 py-2 text-sm outline-none focus:border-[#00C49A]" />
-        <select value={type} onChange={(e) => setType(e.target.value)} className="rounded-lg border border-[#1f1f1f] bg-[#111111] px-3 py-2 text-sm"><option value="ALL">All types</option><option value="RESIDENTIAL">Residential</option><option value="COMMERCIAL">Commercial</option><option value="PLOT">Plot</option><option value="INSTITUTIONAL">Institutional</option></select>
-        <select value={dealType} onChange={(e) => setDealType(e.target.value)} className="rounded-lg border border-[#1f1f1f] bg-[#111111] px-3 py-2 text-sm"><option value="ALL">All deals</option><option value="SALE">Sale</option><option value="RENT">Rent</option></select>
-        <select value={urgency} onChange={(e) => setUrgency(e.target.value)} className="rounded-lg border border-[#1f1f1f] bg-[#111111] px-3 py-2 text-sm"><option value="ALL">All urgency</option><option value="IMMEDIATE">Hot</option><option value="WITHIN_30_DAYS">Warm</option><option value="FLEXIBLE">Flexible</option></select>
-        <select value={status} onChange={(e) => setStatus(e.target.value)} className="rounded-lg border border-[#1f1f1f] bg-[#111111] px-3 py-2 text-sm"><option value="ALL">All status</option><option value="ACTIVE">Active</option><option value="MATCHED">Matched</option><option value="CLOSED">Closed</option></select>
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search by city, area..."
+          className="min-w-56 rounded-lg border border-[#1f1f1f] bg-[#111111] px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 outline-none focus:border-[#00C49A]"
+        />
+        <select
+          value={type}
+          onChange={(e) => setType(e.target.value)}
+          className="rounded-lg border border-[#1f1f1f] bg-[#111111] px-3 py-2 text-sm text-zinc-200"
+        >
+          <option value="ALL">All types</option>
+          <option value="RESIDENTIAL">Residential</option>
+          <option value="COMMERCIAL">Commercial</option>
+          <option value="PLOT">Plot</option>
+          <option value="INSTITUTIONAL">Institutional</option>
+        </select>
+        <select
+          value={dealType}
+          onChange={(e) => setDealType(e.target.value)}
+          className="rounded-lg border border-[#1f1f1f] bg-[#111111] px-3 py-2 text-sm text-zinc-200"
+        >
+          <option value="ALL">All deals</option>
+          <option value="SALE">Sale</option>
+          <option value="RENT">Rent</option>
+        </select>
+        <select
+          value={urgency}
+          onChange={(e) => setUrgency(e.target.value)}
+          className="rounded-lg border border-[#1f1f1f] bg-[#111111] px-3 py-2 text-sm text-zinc-200"
+        >
+          <option value="ALL">All urgency</option>
+          <option value="IMMEDIATE">Hot</option>
+          <option value="WITHIN_30_DAYS">Warm</option>
+          <option value="FLEXIBLE">Flexible</option>
+        </select>
+        <select
+          value={status}
+          onChange={(e) => setStatus(e.target.value)}
+          className="rounded-lg border border-[#1f1f1f] bg-[#111111] px-3 py-2 text-sm text-zinc-200"
+        >
+          <option value="ALL">All status</option>
+          <option value="ACTIVE">Active</option>
+          <option value="MATCHED">Matched</option>
+          <option value="CLOSED">Closed</option>
+        </select>
       </div>
 
       <section className="mt-10">

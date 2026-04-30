@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { NotificationType } from '@prisma/client';
 import axios from 'axios';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -103,8 +104,10 @@ export class OcrService {
               data: {
                 userId: a.id,
                 channel: 'in_app',
+                type: NotificationType.ALERT,
                 title: 'OCR fraud detected',
                 body: 'Property image contains contact/platform markers',
+                metadata: { propertyId },
               },
             }),
           ),

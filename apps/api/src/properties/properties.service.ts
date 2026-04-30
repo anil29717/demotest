@@ -4,7 +4,7 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
-import { UserRole } from '@prisma/client';
+import { Prisma, UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { MatchingService } from '../matching/matching.service';
@@ -87,7 +87,7 @@ export class PropertiesService {
         p.distressedLabel === 'high_opportunity'
           ? 'High-Opportunity Investment Deal'
           : undefined,
-      imageUrls: p.imageUrls?.length ? p.imageUrls : undefined,
+      imageUrls: Array.isArray(p.imageUrls) ? p.imageUrls : [],
       createdAt: p.createdAt,
     };
   }
@@ -109,26 +109,30 @@ export class PropertiesService {
         throw new BadRequestException('Not a member of organization');
     }
 
+    const baseCreateData = {
+      postedById: userId,
+      organizationId: dto.organizationId,
+      title: dto.title,
+      description: dto.description,
+      propertyType: dto.propertyType,
+      dealType: dto.dealType,
+      price: dto.price,
+      areaSqft: dto.areaSqft,
+      city: dto.city,
+      areaPublic: dto.areaPublic,
+      localityPublic: dto.localityPublic,
+      addressPrivate: dto.addressPrivate,
+      latitude: dto.latitude,
+      longitude: dto.longitude,
+      imageUrls: (dto.imageUrls ?? [])
+        .map((u) => String(u).trim())
+        .filter(Boolean),
+      distressedLabel: dto.isHighOpportunity ? 'high_opportunity' : 'standard',
+    };
     const row = await this.prisma.property.create({
       data: {
-        postedById: userId,
-        organizationId: dto.organizationId,
-        title: dto.title,
-        description: dto.description,
-        propertyType: dto.propertyType,
-        dealType: dto.dealType,
-        price: dto.price,
-        areaSqft: dto.areaSqft,
-        city: dto.city,
-        areaPublic: dto.areaPublic,
-        localityPublic: dto.localityPublic,
-        addressPrivate: dto.addressPrivate,
-        latitude: dto.latitude,
-        longitude: dto.longitude,
-        imageUrls: dto.imageUrls ?? [],
-        distressedLabel: dto.isHighOpportunity
-          ? 'high_opportunity'
-          : 'standard',
+        ...baseCreateData,
+        ...(dto.location && { location: dto.location as unknown as Prisma.InputJsonValue }),
       },
     });
 
@@ -216,29 +220,35 @@ export class PropertiesService {
           ? 'standard'
           : row.distressedLabel;
 
+    const updateData = {
+      ...(dto.title !== undefined && { title: dto.title }),
+      ...(dto.description !== undefined && { description: dto.description }),
+      ...(dto.propertyType !== undefined && { propertyType: dto.propertyType }),
+      ...(dto.dealType !== undefined && { dealType: dto.dealType }),
+      ...(dto.price !== undefined && { price: dto.price }),
+      ...(dto.areaSqft !== undefined && { areaSqft: dto.areaSqft }),
+      ...(dto.city !== undefined && { city: dto.city }),
+      ...(dto.areaPublic !== undefined && { areaPublic: dto.areaPublic }),
+      ...(dto.localityPublic !== undefined && {
+        localityPublic: dto.localityPublic,
+      }),
+      ...(dto.addressPrivate !== undefined && {
+        addressPrivate: dto.addressPrivate,
+      }),
+      ...(dto.latitude !== undefined && { latitude: dto.latitude }),
+      ...(dto.longitude !== undefined && { longitude: dto.longitude }),
+      ...(dto.location !== undefined && {
+        location: dto.location as unknown as Prisma.InputJsonValue,
+      }),
+      ...(dto.imageUrls !== undefined && {
+        imageUrls: dto.imageUrls.map((u) => String(u).trim()).filter(Boolean),
+      }),
+      ...(dto.isBankAuction !== undefined && { isBankAuction: dto.isBankAuction }),
+      distressedLabel,
+    };
     const updated = await this.prisma.property.update({
       where: { id },
-      data: {
-        ...(dto.title !== undefined && { title: dto.title }),
-        ...(dto.description !== undefined && { description: dto.description }),
-        ...(dto.propertyType !== undefined && { propertyType: dto.propertyType }),
-        ...(dto.dealType !== undefined && { dealType: dto.dealType }),
-        ...(dto.price !== undefined && { price: dto.price }),
-        ...(dto.areaSqft !== undefined && { areaSqft: dto.areaSqft }),
-        ...(dto.city !== undefined && { city: dto.city }),
-        ...(dto.areaPublic !== undefined && { areaPublic: dto.areaPublic }),
-        ...(dto.localityPublic !== undefined && {
-          localityPublic: dto.localityPublic,
-        }),
-        ...(dto.addressPrivate !== undefined && {
-          addressPrivate: dto.addressPrivate,
-        }),
-        ...(dto.latitude !== undefined && { latitude: dto.latitude }),
-        ...(dto.longitude !== undefined && { longitude: dto.longitude }),
-        ...(dto.imageUrls !== undefined && { imageUrls: dto.imageUrls }),
-        ...(dto.isBankAuction !== undefined && { isBankAuction: dto.isBankAuction }),
-        distressedLabel,
-      },
+      data: updateData,
     });
     await this.audit.log({
       userId: actor.sub,
@@ -275,12 +285,25 @@ export class PropertiesService {
   async getPublic(id: string) {
     const row = await this.prisma.property.findUnique({ where: { id } });
     if (!row) return null;
-    return this.toPublic(row);
+    const matchCount = await this.prisma.match.count({
+      where: { propertyId: id },
+    });
+    return { ...this.toPublic(row), matchCount };
   }
 
   async listMine(userId: string) {
+    const memberships = await this.prisma.organizationMember.findMany({
+      where: { userId },
+      select: { organizationId: true },
+    });
+    const orgIds = memberships.map((m) => m.organizationId);
     const rows = await this.prisma.property.findMany({
-      where: { postedById: userId },
+      where: {
+        OR: [
+          { postedById: userId },
+          ...(orgIds.length ? [{ organizationId: { in: orgIds } }] : []),
+        ],
+      },
       orderBy: { createdAt: 'desc' },
     });
     return rows.map((r) => this.toPublic(r));

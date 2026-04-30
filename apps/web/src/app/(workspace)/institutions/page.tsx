@@ -6,7 +6,7 @@ import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, getUserFacingErrorMessage } from "@/lib/api";
 import { formatINR, timeAgo } from "@/lib/format";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageSkeleton } from "@/components/ui/skeleton";
@@ -20,6 +20,8 @@ type Inst = {
   studentEnrollment: number | null;
   createdAt?: string;
   locked?: boolean;
+  ndaStatus?: string;
+  isPoster?: boolean;
   transactionType?: string;
 };
 
@@ -29,14 +31,21 @@ export default function InstitutionsPage() {
   const [tab, setTab] = useState<"all" | "nda" | "approved" | "mine" | "browse">("all");
   const [filterTx, setFilterTx] = useState<string>("ALL");
 
-  const { data: rows = [], isLoading } = useQuery({
+  const {
+    data: rows = [],
+    isLoading,
+    isError,
+    error,
+    refetch,
+  } = useQuery({
     queryKey: ["institutions", token],
     enabled: Boolean(token),
     queryFn: () =>
-      apiFetch<Inst[]>("/institutions?limit=20&offset=0", {
+      apiFetch<Inst[]>("/institutions/me", {
         token: token ?? undefined,
-      }).catch(() => []),
+      }),
     staleTime: 1000 * 60 * 2,
+    retry: 1,
   });
   void queryClient;
 
@@ -56,8 +65,8 @@ export default function InstitutionsPage() {
   const filtered = useMemo(() => {
     let r = rows;
     if (user?.role === "INSTITUTIONAL_BUYER") {
-      if (activeTab === "nda") r = r.filter((i) => i.locked !== false);
-      if (activeTab === "approved") r = r.filter((i) => i.locked === false);
+      if (activeTab === "nda") r = r.filter((i) => i.ndaStatus === "PENDING");
+      if (activeTab === "approved") r = r.filter((i) => i.ndaStatus === "APPROVED" || i.isPoster);
     }
     if (filterTx !== "ALL") {
       r = r.filter((i) => String(i.transactionType ?? "").toUpperCase() === filterTx);
@@ -81,6 +90,22 @@ export default function InstitutionsPage() {
   }
 
   if (isLoading) return <PageSkeleton count={4} type="card" />;
+
+  if (isError) {
+    return (
+      <div className="rounded-xl border border-red-900/50 bg-red-950/20 p-4 text-sm text-red-200">
+        <p>Could not load institutional listings.</p>
+        <p className="mt-2 text-xs text-red-300/90">{getUserFacingErrorMessage(error, "Unknown error")}</p>
+        <button
+          type="button"
+          onClick={() => void refetch()}
+          className="mt-3 rounded-lg border border-red-800 px-3 py-1.5 text-xs text-red-100 hover:bg-red-950/40"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -169,21 +194,18 @@ export default function InstitutionsPage() {
 
       <ul className="grid gap-3 md:grid-cols-2">
         {filtered.map((i) => (
-          <motion.li
-            key={i.id}
-            whileHover={{ y: -2 }}
-            className="rounded-xl border border-[#1f1f1f] bg-[#111111] p-4"
-          >
+          <motion.li key={i.id} whileHover={{ y: -2 }} className="rounded-xl border border-[#1f1f1f] bg-[#111111]">
+            <Link href={`/institutions/${i.id}`} className="block p-4 transition hover:border-[#00C49A]/30">
             <div className="flex items-center justify-between">
               <span className="rounded-md border border-[#1f1f1f] px-2 py-0.5 text-xs text-[#888888]">{i.institutionType}</span>
               <span className="inline-flex items-center gap-1 text-xs text-amber-300">
                 <Lock className="h-3 w-3" />
-                NDA
+                {i.ndaStatus === "APPROVED" || i.isPoster ? "Unlocked" : "NDA"}
               </span>
             </div>
-            <Link href={`/institutions/${i.id}`} className="mt-3 block text-base font-semibold text-white hover:text-[#00C49A]">
+            <p className="mt-3 text-base font-semibold text-white">
               {i.maskedSummary ?? `Confidential — ${i.institutionType}`}
-            </Link>
+            </p>
             <p className="mt-1 inline-flex items-center gap-1 text-xs text-[#888888]">
               <MapPin className="h-3 w-3" />
               {i.city}
@@ -211,13 +233,28 @@ export default function InstitutionsPage() {
                 View details →
               </span>
             </div>
+            </Link>
             {isInstBuyer ? (
+              <div className="border-t border-[#1f1f1f] px-4 pb-4">
               <Link
                 href={`/institutions/${i.id}`}
-                className="mt-3 block w-full rounded-lg bg-amber-500 py-2 text-center text-sm font-semibold text-black hover:bg-amber-400"
+                className={`block w-full rounded-lg py-2 text-center text-sm font-semibold ${
+                  i.ndaStatus === "PENDING"
+                    ? "cursor-default border border-amber-800/50 bg-amber-950/30 text-amber-200"
+                    : i.ndaStatus === "APPROVED" || i.isPoster
+                      ? "bg-emerald-600 text-white hover:bg-emerald-500"
+                      : "bg-amber-500 text-black hover:bg-amber-400"
+                }`}
               >
-                Request NDA access
+                {i.isPoster
+                  ? "Your listing"
+                  : i.ndaStatus === "PENDING"
+                    ? "Access pending"
+                    : i.ndaStatus === "APPROVED"
+                      ? "View details"
+                      : "Request Access"}
               </Link>
+              </div>
             ) : null}
           </motion.li>
         ))}

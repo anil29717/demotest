@@ -13,7 +13,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/contexts/auth-context";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, getUserFacingErrorMessage } from "@/lib/api";
 import { formatINR, timeAgo } from "@/lib/format";
 import { LoadingSkeleton } from "@/components/ui/loading-skeleton";
 
@@ -31,6 +31,20 @@ type Detail = {
   verificationStatus?: string;
   dealScore?: number;
   createdAt?: string;
+  ndaStatus?:
+    | "NOT_REQUESTED"
+    | "PENDING"
+    | "REJECTED"
+    | "APPROVED"
+    | "OWNER"
+    | "ADMIN"
+    | "NOT_REQUIRED"
+    | string;
+  reviewNote?: string | null;
+};
+type NdaStatusRow = {
+  status: "PENDING" | "APPROVED" | "REJECTED" | string;
+  reviewNote?: string | null;
 };
 
 const PIPE = [
@@ -50,6 +64,7 @@ export default function InstitutionDetailPage() {
   const id = params.id as string;
   const { token, user } = useAuth();
   const [row, setRow] = useState<Detail | null | undefined>(undefined);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [orgName, setOrgName] = useState<string>("");
@@ -58,16 +73,26 @@ export default function InstitutionDetailPage() {
   const [budgetMax, setBudgetMax] = useState("");
   const [docs, setDocs] = useState<{ id: string; type: string; createdAt: string }[]>([]);
   const [dealId, setDealId] = useState<string | null>(null);
+  const [ndaStatus, setNdaStatus] = useState<NdaStatusRow | null>(null);
 
   const load = useCallback(() => {
+    setLoadError(null);
     if (token) {
       return apiFetch<Detail>(`/institutions/${id}`, { token })
-        .then(setRow)
-        .catch(() => setRow(null));
+        .then((d) => {
+          setRow(d);
+        })
+        .catch((e) => {
+          setRow(null);
+          setLoadError(getUserFacingErrorMessage(e, "Could not load this listing."));
+        });
     }
     return apiFetch<Detail>(`/institutions/preview/${id}`)
       .then(setRow)
-      .catch(() => setRow(null));
+      .catch((e) => {
+        setRow(null);
+        setLoadError(getUserFacingErrorMessage(e, "Could not load this listing."));
+      });
   }, [id, token]);
 
   useEffect(() => {
@@ -80,6 +105,34 @@ export default function InstitutionDetailPage() {
       .then((o) => setOrgName(o[0]?.name?.trim() || "Your organization"))
       .catch(() => setOrgName("Your organization"));
   }, [token, user?.role]);
+
+  useEffect(() => {
+    if (!token) {
+      setNdaStatus(null);
+      return;
+    }
+    if (!row) return;
+    if (row.locked) {
+      if (row.ndaStatus && row.ndaStatus !== "APPROVED") {
+        setNdaStatus({
+          status: row.ndaStatus,
+          reviewNote: row.reviewNote ?? null,
+        });
+        return;
+      }
+      void apiFetch<NdaStatusRow | null>(`/nda/status?institutionId=${encodeURIComponent(id)}`, { token })
+        .then((n) =>
+          setNdaStatus(
+            n
+              ? { status: n.status, reviewNote: n.reviewNote ?? null }
+              : { status: "NOT_REQUESTED", reviewNote: null },
+          ),
+        )
+        .catch(() => setNdaStatus(null));
+      return;
+    }
+    setNdaStatus(null);
+  }, [id, token, row]);
 
   useEffect(() => {
     if (!token || !row || row.locked) return;
@@ -101,7 +154,7 @@ export default function InstitutionDetailPage() {
       .catch(() => setDocs([]));
   }, [token, dealId, row?.locked]);
 
-  async function signNda() {
+  async function requestAccess() {
     if (!token) {
       setMsg("Log in to continue.");
       return;
@@ -109,15 +162,22 @@ export default function InstitutionDetailPage() {
     setMsg(null);
     setBusy(true);
     try {
-      await apiFetch("/nda/sign", {
+      await apiFetch("/nda/request", {
         method: "POST",
         token,
-        body: JSON.stringify({ institutionId: id }),
+        body: JSON.stringify({
+          institutionId: id,
+          purpose: purpose || undefined,
+          budgetMin: budgetMin ? Number(budgetMin) : undefined,
+          budgetMax: budgetMax ? Number(budgetMax) : undefined,
+          organizationName: orgName || undefined,
+        }),
       });
-      setMsg("NDA approved. Confidential details are now unlocked.");
+      setMsg("Access request submitted. Waiting for approval.");
+      setNdaStatus({ status: "PENDING", reviewNote: null });
       await load();
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : "Something went wrong.");
+      setMsg(getUserFacingErrorMessage(e, "Could not submit access request."));
     } finally {
       setBusy(false);
     }
@@ -126,18 +186,38 @@ export default function InstitutionDetailPage() {
   if (row === undefined) return <LoadingSkeleton rows={2} />;
   if (row === null) {
     return (
-      <p className="text-sm text-[#888888]">
+      <div className="text-sm text-[#888888]">
         <Link href="/institutions" className="text-[#00C49A]">
           ← Back
         </Link>
-        <span className="mt-4 block">This listing could not be opened.</span>
-      </p>
+        <p className="mt-4 text-red-300/90">{loadError ?? "This listing could not be opened."}</p>
+        <button
+          type="button"
+          onClick={() => void load()}
+          className="mt-4 rounded-lg border border-[#1f1f1f] px-4 py-2 text-[#00C49A] hover:bg-[#111111]"
+        >
+          Retry
+        </button>
+      </div>
     );
   }
 
   const isInstBuyer = user?.role === "INSTITUTIONAL_BUYER";
+  const canRequestAccess = user?.role === "INSTITUTIONAL_BUYER" || user?.role === "BROKER";
   const locked = row.locked === true;
-  const showInstBuyerGate = isInstBuyer && locked;
+  const showAccessGate = canRequestAccess && locked;
+  const ndaFlowStatus = ndaStatus?.status ?? row.ndaStatus;
+  const requestDisabled =
+    busy ||
+    ndaFlowStatus === "PENDING" ||
+    ndaFlowStatus === "APPROVED" ||
+    row.ndaStatus === "APPROVED";
+  const requestLabel =
+    ndaFlowStatus === "PENDING"
+      ? "Request pending"
+      : ndaFlowStatus === "APPROVED"
+        ? "Access approved"
+        : "Request Access";
 
   const priceInr = Number(row.askingPriceCr ?? 0) * 10000000;
 
@@ -148,7 +228,7 @@ export default function InstitutionDetailPage() {
       </Link>
 
       <div className="relative mt-4">
-        <div className={showInstBuyerGate ? "pointer-events-none blur-sm" : ""}>
+        <div className={showAccessGate ? "pointer-events-none blur-sm" : ""}>
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-md border border-[#1a1a1a] bg-[#111111] px-2 py-0.5 text-xs text-[#888888]">{row.institutionType}</span>
             {!locked ? (
@@ -240,7 +320,7 @@ export default function InstitutionDetailPage() {
         </div>
 
         <AnimatePresence>
-          {showInstBuyerGate ? (
+          {showAccessGate ? (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -249,6 +329,16 @@ export default function InstitutionDetailPage() {
               <LockKeyhole className="h-12 w-12 text-amber-400" />
               <p className="mt-4 text-base font-semibold text-white">Sign NDA to access full institution details</p>
               <p className="mt-2 max-w-md text-sm text-[#888888]">This listing contains confidential information.</p>
+              {(ndaFlowStatus === "PENDING" || ndaStatus?.status === "PENDING") ? (
+                <p className="mt-3 rounded border border-amber-900/40 bg-amber-950/25 px-3 py-2 text-xs text-amber-200">
+                  Waiting for admin approval
+                </p>
+              ) : null}
+              {(ndaFlowStatus === "REJECTED" || ndaStatus?.status === "REJECTED") ? (
+                <p className="mt-3 rounded border border-red-900/40 bg-red-950/25 px-3 py-2 text-xs text-red-300">
+                  Access denied{ndaStatus?.reviewNote ? `: ${ndaStatus.reviewNote}` : ""}
+                </p>
+              ) : null}
 
               <div className="mt-8 w-full max-w-md space-y-4 text-left">
                 <div>
@@ -291,11 +381,11 @@ export default function InstitutionDetailPage() {
                 </div>
                 <button
                   type="button"
-                  disabled={busy}
-                  onClick={() => void signNda()}
-                  className="flex h-12 w-full items-center justify-center rounded-lg bg-amber-500 text-sm font-semibold text-black hover:bg-amber-400 disabled:opacity-50"
+                  disabled={requestDisabled}
+                  onClick={() => void requestAccess()}
+                  className="flex h-12 w-full items-center justify-center rounded-lg bg-amber-500 text-sm font-semibold text-black hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {busy ? "Submitting…" : "Request NDA access"}
+                  {busy ? "Submitting…" : requestLabel}
                 </button>
               </div>
             </motion.div>
@@ -303,19 +393,33 @@ export default function InstitutionDetailPage() {
         </AnimatePresence>
       </div>
 
-      {!isInstBuyer && locked ? (
+      {!showAccessGate && locked ? (
         <div className="mt-8 rounded-lg border border-amber-900/50 bg-amber-950/20 p-6 text-center">
           <LockKeyhole className="mx-auto h-10 w-10 text-amber-300" />
           <p className="mt-3 text-base font-medium text-white">Confidential listing</p>
           <p className="mt-1 text-sm text-[#888888]">Request access to view the full profile.</p>
-          <button
-            type="button"
-            onClick={() => void signNda()}
-            disabled={busy}
-            className="mt-4 rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-black hover:bg-amber-400 disabled:opacity-50"
-          >
-            {busy ? "Submitting…" : "Request NDA access"}
-          </button>
+          {(ndaFlowStatus === "PENDING" || ndaStatus?.status === "PENDING") ? (
+            <p className="mt-3 text-xs text-amber-200">Waiting for admin approval</p>
+          ) : null}
+          {(ndaFlowStatus === "REJECTED" || ndaStatus?.status === "REJECTED") ? (
+            <p className="mt-3 text-xs text-red-300">
+              Access denied{ndaStatus?.reviewNote ? `: ${ndaStatus.reviewNote}` : ""}
+            </p>
+          ) : null}
+          {canRequestAccess ? (
+            <button
+              type="button"
+              onClick={() => void requestAccess()}
+              disabled={requestDisabled}
+              className="mt-4 rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-black hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {busy ? "Submitting…" : requestLabel}
+            </button>
+          ) : (
+            <p className="mt-4 text-xs text-zinc-400">
+              Only institutional buyers or brokers can request access.
+            </p>
+          )}
         </div>
       ) : null}
 

@@ -124,7 +124,8 @@ export class AuthService {
   }
 
   /**
-   * Deterministic demo users (9990000001–9990000008) so each role maps to a stable account.
+   * Deterministic demo users so each role maps to a stable account
+   * with human-readable identity data (name/email/phone).
    * Only enabled when DEMO_LOGIN=true (never enable in production).
    */
   async devLogin(role: UserRole) {
@@ -132,25 +133,78 @@ export class AuthService {
       throw new ForbiddenException('Demo login is disabled');
     }
 
-    const roleToPhone: Record<UserRole, string> = {
-      [UserRole.BROKER]: '9990000001',
-      [UserRole.BUYER]: '9990000002',
-      [UserRole.SELLER]: '9990000003',
-      [UserRole.NRI]: '9990000004',
-      [UserRole.HNI]: '9990000005',
-      [UserRole.BUILDER]: '9990000006',
-      [UserRole.INSTITUTIONAL_SELLER]: '9990000007',
-      [UserRole.INSTITUTIONAL_BUYER]: '9990000008',
-      [UserRole.ADMIN]: '9990000009',
+    const roleToDemo: Record<
+      UserRole,
+      { phone: string; name: string; email: string }
+    > = {
+      [UserRole.BROKER]: {
+        phone: '9990000001',
+        name: 'Arun Broker',
+        email: 'broker.demo@arbuildwel.local',
+      },
+      [UserRole.BUYER]: {
+        phone: '9990000002',
+        name: 'Bhavna Buyer',
+        email: 'buyer.demo@arbuildwel.local',
+      },
+      [UserRole.SELLER]: {
+        phone: '9990000003',
+        name: 'Suresh Seller',
+        email: 'seller.demo@arbuildwel.local',
+      },
+      [UserRole.NRI]: {
+        phone: '9990000004',
+        name: 'Neha NRI',
+        email: 'nri.demo@arbuildwel.local',
+      },
+      [UserRole.HNI]: {
+        phone: '9990000005',
+        name: 'Harsh HNI',
+        email: 'hni.demo@arbuildwel.local',
+      },
+      [UserRole.BUILDER]: {
+        phone: '9990000006',
+        name: 'Bharat Builder',
+        email: 'builder.demo@arbuildwel.local',
+      },
+      [UserRole.INSTITUTIONAL_SELLER]: {
+        phone: '9990000007',
+        name: 'Institution Seller',
+        email: 'inst.seller.demo@arbuildwel.local',
+      },
+      [UserRole.INSTITUTIONAL_BUYER]: {
+        phone: '9990000008',
+        name: 'Institution Buyer',
+        email: 'inst.buyer.demo@arbuildwel.local',
+      },
+      [UserRole.ADMIN]: {
+        phone: '9990000009',
+        name: 'Admin User',
+        email: 'admin.demo@arbuildwel.local',
+      },
     };
 
-    const phone = roleToPhone[role];
+    const demo = roleToDemo[role];
+    const phone = demo.phone;
     const hash = phoneHash(phone);
 
     const user = await this.prisma.user.upsert({
       where: { phoneHash: hash },
-      create: { phoneHash: hash, phoneEnc: null, role },
-      update: { role },
+      create: {
+        phoneHash: hash,
+        phoneEnc: phone,
+        name: demo.name,
+        email: demo.email,
+        role,
+        verified: true,
+      },
+      update: {
+        phoneEnc: phone,
+        name: demo.name,
+        email: demo.email,
+        role,
+        verified: true,
+      },
     });
 
     const accessToken = await this.jwt.signAsync({

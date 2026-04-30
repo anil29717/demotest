@@ -36,7 +36,16 @@ export class ExportController {
     const body = rows
       .map(
         (r) =>
-          `${r.id},${r.stage},${r.requirementId},${r.propertyId ?? ''},${r.institutionId ?? ''},${r.createdAt.toISOString()}`,
+          [
+            r.id,
+            r.stage,
+            r.requirementId,
+            r.propertyId ?? '',
+            r.institutionId ?? '',
+            r.createdAt.toISOString(),
+          ]
+            .map(escapeCsv)
+            .join(','),
       )
       .join('\n');
     res.setHeader('Content-Type', 'text/csv');
@@ -65,7 +74,18 @@ export class ExportController {
     const body = rows
       .map(
         (r) =>
-          `${r.id},${escapeCsv(r.title)},${escapeCsv(r.city)},${r.dealType},${String(r.price)},${r.areaSqft},${r.status},${r.createdAt.toISOString()}`,
+          [
+            r.id,
+            r.title,
+            r.city,
+            r.dealType,
+            String(r.price),
+            String(r.areaSqft),
+            r.status,
+            r.createdAt.toISOString(),
+          ]
+            .map(escapeCsv)
+            .join(','),
       )
       .join('\n');
     res.setHeader('Content-Type', 'text/csv');
@@ -97,7 +117,16 @@ export class ExportController {
     const body = rows
       .map(
         (r) =>
-          `${r.id},${escapeCsv(r.leadName)},${r.source},${r.status},${r.pipelineStage ?? ''},${r.createdAt.toISOString()}`,
+          [
+            r.id,
+            r.leadName,
+            r.source,
+            r.status,
+            r.pipelineStage ?? '',
+            r.createdAt.toISOString(),
+          ]
+            .map(escapeCsv)
+            .join(','),
       )
       .join('\n');
     res.setHeader('Content-Type', 'text/csv');
@@ -106,7 +135,19 @@ export class ExportController {
   }
 }
 
-function escapeCsv(s: string) {
-  if (s.includes(',') || s.includes('"')) return `"${s.replace(/"/g, '""')}"`;
-  return s;
+function escapeCsv(raw: string) {
+  const s = String(raw ?? '');
+  const neutralized =
+    s.startsWith('=') || s.startsWith('+') || s.startsWith('-') || s.startsWith('@')
+      ? `'${s}`
+      : s;
+  if (
+    neutralized.includes(',') ||
+    neutralized.includes('"') ||
+    neutralized.includes('\n') ||
+    neutralized.includes('\r')
+  ) {
+    return `"${neutralized.replace(/"/g, '""')}"`;
+  }
+  return neutralized;
 }

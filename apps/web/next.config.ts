@@ -14,7 +14,11 @@ const nextConfig: NextConfig = {
       "s3.amazonaws.com",
       "localhost",
     ],
-    remotePatterns: [{ protocol: "https", hostname: "**" }],
+    remotePatterns: [
+      { protocol: "https", hostname: "**" },
+      { protocol: "http", hostname: "localhost", pathname: "/uploads/**" },
+      { protocol: "http", hostname: "127.0.0.1", pathname: "/uploads/**" },
+    ],
   },
   webpack: (config, { dev }) => {
     if (dev) {

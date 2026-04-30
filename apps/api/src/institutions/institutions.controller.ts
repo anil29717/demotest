@@ -55,6 +55,24 @@ export class InstitutionsController {
     return this.institutions.maskedList();
   }
 
+  /** Masked list + per-user NDA access flags (preferred when authenticated). */
+  @Get('me')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.BROKER,
+    UserRole.BUYER,
+    UserRole.SELLER,
+    UserRole.HNI,
+    UserRole.NRI,
+    UserRole.BUILDER,
+    UserRole.INSTITUTIONAL_BUYER,
+    UserRole.INSTITUTIONAL_SELLER,
+  )
+  listForMe(@CurrentUser() user: JwtPayloadUser) {
+    return this.institutions.listWithAccessContext(user);
+  }
+
   /** Masked preview without auth (public marketing pages) — must be before :id */
   @Get('preview/:id')
   preview(@Param('id') id: string) {
@@ -79,12 +97,14 @@ export class InstitutionsController {
   @Roles(
     UserRole.ADMIN,
     UserRole.BROKER,
+    UserRole.BUYER,
+    UserRole.SELLER,
     UserRole.HNI,
     UserRole.INSTITUTIONAL_BUYER,
     UserRole.INSTITUTIONAL_SELLER,
   )
   detail(@CurrentUser() user: JwtPayloadUser, @Param('id') id: string) {
-    return this.institutions.detailForUser(id, user.sub);
+    return this.institutions.detailForUser(id, user);
   }
 
   @Post()

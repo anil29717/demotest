@@ -54,7 +54,9 @@ export function middleware(request: NextRequest) {
   if (isWorkspaceRoute && !token) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
-  if (isWorkspaceRoute && token && !canAccessPath(pathname, role)) {
+  // If role cannot be decoded from cookie token, do not hard-redirect here;
+  // client auth context will resolve role from profile/JWT and guard routes.
+  if (isWorkspaceRoute && token && role && !canAccessPath(pathname, role)) {
     return NextResponse.redirect(new URL("/dashboard", request.url));
   }
 

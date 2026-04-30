@@ -4,7 +4,18 @@ import Link from "next/link";
 import Image from "next/image";
 import { motion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
-import { Briefcase, CheckCircle, Search } from "lucide-react";
+import { useMemo, useState } from "react";
+import {
+  ArrowRight,
+  Briefcase,
+  CheckCircle,
+  FileCheck2,
+  Flag,
+  Handshake,
+  MapPinned,
+  Search,
+  Sparkles,
+} from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { apiFetch } from "@/lib/api";
 import { formatINR, timeAgo } from "@/lib/format";
@@ -25,9 +36,90 @@ type Deal = {
   closureProbability?: { probability: number; label: "High" | "Medium" | "At risk" };
 };
 
-const STAGES = ["LEAD", "MATCH", "SITE_VISIT", "NEGOTIATION", "LEGAL", "LOAN", "INSURANCE", "PAYMENT", "CLOSURE"] as const;
+const STAGES = [
+  "LEAD",
+  "REQUIREMENT",
+  "MATCH",
+  "SITE_VISIT",
+  "NEGOTIATION",
+  "LEGAL",
+  "LOAN",
+  "INSURANCE",
+  "PAYMENT",
+  "CLOSURE",
+] as const;
+const STAGE_LABEL: Record<(typeof STAGES)[number], string> = {
+  LEAD: "Lead",
+  REQUIREMENT: "Requirement",
+  MATCH: "Match",
+  SITE_VISIT: "Site Visit",
+  NEGOTIATION: "Negotiation",
+  LEGAL: "Legal",
+  LOAN: "Loan",
+  INSURANCE: "Insurance",
+  PAYMENT: "Payment",
+  CLOSURE: "Closure",
+};
 
 export default function DealsPage() {
+  const [q, setQ] = useState("");
+  const [stageFilter, setStageFilter] = useState("ALL");
+  function stageIcon(stage: (typeof STAGES)[number]) {
+    if (stage === "LEAD") return <Sparkles className="h-3.5 w-3.5" />;
+    if (stage === "MATCH") return <Handshake className="h-3.5 w-3.5" />;
+    if (stage === "SITE_VISIT") return <MapPinned className="h-3.5 w-3.5" />;
+    if (stage === "NEGOTIATION") return <Briefcase className="h-3.5 w-3.5" />;
+    if (stage === "LEGAL") return <FileCheck2 className="h-3.5 w-3.5" />;
+    return <Flag className="h-3.5 w-3.5" />;
+  }
+
+  function pipeline(stageRaw: string) {
+    const stage = (STAGES.includes(stageRaw as (typeof STAGES)[number]) ? stageRaw : "LEAD") as (typeof STAGES)[number];
+    const activeIdx = STAGES.indexOf(stage);
+    return (
+      <div className="mt-3 w-full rounded-lg border border-zinc-800 bg-zinc-950/60 p-3">
+        <div className="flex items-start">
+          {STAGES.map((s, idx) => {
+            const done = idx < activeIdx;
+            const active = idx === activeIdx;
+            return (
+              <div key={s} className="flex min-w-0 flex-1 items-center">
+                <div className="flex min-w-0 flex-col items-center">
+                  <div
+                    className={`flex h-7 w-7 items-center justify-center rounded-full border ${
+                      done
+                        ? "border-teal-500 bg-teal-500 text-black"
+                        : active
+                          ? "border-[#00C49A] bg-[#00C49A]/15 text-[#00C49A]"
+                          : "border-zinc-700 bg-zinc-900 text-zinc-500"
+                    }`}
+                    title={STAGE_LABEL[s]}
+                  >
+                    {done ? <CheckCircle className="h-4 w-4" /> : stageIcon(s)}
+                  </div>
+                  <span
+                    className={`mt-1 text-[10px] ${
+                      active ? "text-[#00C49A]" : done ? "text-teal-300" : "text-zinc-500"
+                    }`}
+                  >
+                    {STAGE_LABEL[s]}
+                  </span>
+                </div>
+                {idx < STAGES.length - 1 ? (
+                  <div className="mb-4 h-[2px] flex-1 bg-zinc-800">
+                    <div
+                      className={`h-full ${idx < activeIdx ? "bg-teal-500" : idx === activeIdx ? "bg-[#00C49A]/60" : "bg-transparent"}`}
+                    />
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
   function probabilityBadge(cp?: { probability: number; label: string }) {
     if (!cp) return null;
     const tone =
@@ -57,6 +149,20 @@ export default function DealsPage() {
       ),
     staleTime: 1000 * 60 * 1,
   });
+  const filteredDeals = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    return deals.filter((d) => {
+      const stageOk =
+        stageFilter === "ALL" || String(d.stage).toUpperCase() === stageFilter;
+      if (!stageOk) return false;
+      if (!needle) return true;
+      const title = d.property?.title ?? d.institution?.city ?? "";
+      return (
+        title.toLowerCase().includes(needle) ||
+        d.id.toLowerCase().includes(needle)
+      );
+    });
+  }, [deals, q, stageFilter]);
 
   if (!token)
     return (
@@ -79,10 +185,7 @@ export default function DealsPage() {
           <p className="mt-1 text-sm text-[#888888]">Transactions you are part of as a buyer.</p>
         </div>
         <ul className="space-y-4">
-          {deals.map((d) => {
-            const si = STAGES.indexOf(d.stage as (typeof STAGES)[number]);
-            const idx = si >= 0 ? si : 2;
-            const filled = Math.min(10, Math.max(1, Math.ceil(((idx + 1) / STAGES.length) * 10)));
+          {filteredDeals.map((d) => {
             return (
               <motion.li
                 key={d.id}
@@ -107,14 +210,7 @@ export default function DealsPage() {
                       {d.stage}
                     </Badge>
                     <div className="mt-2">{probabilityBadge(d.closureProbability)}</div>
-                    <div className="mt-3 flex flex-wrap gap-1">
-                      {Array.from({ length: 10 }).map((_, i) => (
-                        <span
-                          key={`${d.id}-p-${i}`}
-                          className={`h-2 w-2 rounded-full ${i < filled ? "bg-[#378ADD]" : "bg-[#333333]"}`}
-                        />
-                      ))}
-                    </div>
+                    {pipeline(d.stage)}
                     <p className="mt-2 text-xs text-[#888888]">Seller: verified counterparty (masked)</p>
                     {d.slaBreachCount ? <p className="mt-1 text-xs text-amber-300">SLA attention suggested</p> : null}
                     <p className="mt-1 text-xs text-[#555555]">Updated {timeAgo(d.updatedAt)}</p>
@@ -132,7 +228,7 @@ export default function DealsPage() {
             );
           })}
         </ul>
-        {deals.length === 0 ? (
+        {filteredDeals.length === 0 ? (
           <EmptyState
             icon={Briefcase}
             title="No active deals"
@@ -164,32 +260,48 @@ export default function DealsPage() {
       <div className="mt-3 flex flex-wrap gap-2">
         <input
           placeholder="Search by property, buyer..."
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
           className="rounded-lg border border-[#1f1f1f] bg-[#111111] px-3 py-2 text-sm"
         />
-        <select className="rounded-lg border border-[#1f1f1f] bg-[#111111] px-3 py-2 text-sm">
-          <option>All stages</option>
-          <option>Lead</option>
-          <option>Match</option>
-          <option>Site Visit</option>
-          <option>Negotiation</option>
-          <option>Legal</option>
-          <option>Loan</option>
-          <option>Insurance</option>
-          <option>Payment</option>
-          <option>Closure</option>
+        <select
+          value={stageFilter}
+          onChange={(e) => setStageFilter(e.target.value)}
+          className="rounded-lg border border-[#1f1f1f] bg-[#111111] px-3 py-2 text-sm"
+        >
+          <option value="ALL">All stages</option>
+          <option value="LEAD">Lead</option>
+          <option value="REQUIREMENT">Requirement</option>
+          <option value="MATCH">Match</option>
+          <option value="SITE_VISIT">Site Visit</option>
+          <option value="NEGOTIATION">Negotiation</option>
+          <option value="LEGAL">Legal</option>
+          <option value="LOAN">Loan</option>
+          <option value="INSURANCE">Insurance</option>
+          <option value="PAYMENT">Payment</option>
+          <option value="CLOSURE">Closure</option>
         </select>
       </div>
       <ul className="mt-6 space-y-2">
-        {deals.map((d) => (
+        {filteredDeals.map((d) => (
           <li
             key={d.id}
             className={`rounded-lg border bg-zinc-900/40 px-4 py-3 ${
               d.slaBreachCount ? "border-l-4 border-l-[#FF6B6B] border-[#1f1f1f]" : "border-[#1f1f1f]"
             }`}
           >
-            <Link href={`/deals/${d.id}`} className="font-medium text-teal-400 hover:underline">
-              {d.property?.title ?? d.institution?.city ?? "Deal"} · {d.stage}
-            </Link>
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <Link href={`/deals/${d.id}`} className="font-medium text-teal-400 hover:underline">
+                {d.property?.title ?? d.institution?.city ?? "Deal"} · {d.stage}
+              </Link>
+              <Link
+                href={`/deals/${d.id}`}
+                className="inline-flex items-center gap-1 rounded border border-teal-700/60 px-2.5 py-1 text-xs font-medium text-teal-300 hover:bg-teal-900/20"
+              >
+                Open details
+                <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            </div>
             <p className="text-xs text-zinc-500">
               Value {formatINR(Number(d.valueInr ?? 0))} · Health {d.dealHealthScore ?? "—"} · updated{" "}
               {new Date(d.updatedAt).toLocaleString()}
@@ -201,16 +313,11 @@ export default function DealsPage() {
                 Verified buyer
               </p>
             ) : null}
-            <div className="mt-2 flex items-center gap-2 text-[11px] text-zinc-400">
-              {["LEAD", "MATCH", "SITE_VISIT", "NEGOTIATION", "LEGAL", "LOAN", "INSURANCE", "PAYMENT", "CLOSURE"].map((s) => (
-                <span key={s} className={`h-2 w-2 rounded-full ${s === d.stage ? "bg-[#00C49A]" : "bg-[#333]"}`} title={s} />
-              ))}
-              {d.stage === "CLOSURE" ? <CheckCircle className="h-3 w-3 text-[#00C49A]" /> : null}
-            </div>
+            {pipeline(d.stage)}
           </li>
         ))}
       </ul>
-      {deals.length === 0 && (
+      {filteredDeals.length === 0 && (
         <div className="mt-8 rounded-xl border border-[#1a1a1a] bg-[#111111] p-8 text-center">
           <Search className="mx-auto h-10 w-10 text-[#444444]" />
           <p className="mt-3 text-base font-medium text-white">No deals in this workspace</p>

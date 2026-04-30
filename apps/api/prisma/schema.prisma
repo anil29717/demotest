@@ -1,5 +1,8 @@
 generator client {
-  provider = "prisma-client-js"
+  provider   = "prisma-client-js"
+  /// Use the Rust query-engine binary so local `postgresql://` URLs work.
+  /// Avoid `prisma generate --no-engine`; that targets Accelerate/Data Proxy (`prisma://` URLs).
+  engineType = "binary"
 }
 
 datasource db {
@@ -146,6 +149,46 @@ enum ChatMessageType {
   SYSTEM
 }
 
+enum ComplianceAlertType {
+  MISSING_NDA
+  MISSING_RERA
+}
+
+enum ComplianceAlertSeverity {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum ComplianceAlertStatus {
+  OPEN
+  RESOLVED
+}
+
+enum DdCaseStatus {
+  OPEN
+  IN_PROGRESS
+  BLOCKED
+  COMPLETED
+}
+
+enum DdItemStatus {
+  OPEN
+  IN_PROGRESS
+  BLOCKED
+  COMPLETED
+}
+
+enum DdEventType {
+  CASE_CREATED
+  CASE_STATUS_CHANGED
+  ITEMS_SYNCED
+  ITEM_ASSIGNED
+  ITEM_STATUS_CHANGED
+  EVIDENCE_ADDED
+  NOTE_ADDED
+}
+
 model User {
   id         String   @id @default(cuid())
   phoneHash  String   @unique
@@ -173,8 +216,11 @@ model User {
   leadsOwned          Lead[]               @relation("LeadOwner")
   leadNotes           LeadNote[]
   leadFollowUps       LeadFollowUp[]
+  dealOffers          DealOffer[]
+  serviceRequestsCreated ServiceRequest[] @relation("ServiceRequestCreatedBy")
   institutionsPosted  Institution[]
   ndas                Nda[]
+  ndaReviews          Nda[]               @relation("NdaReviewedBy")
   activityLogs        ActivityLog[]
   notifications       Notification[]
   documentsUploaded   Document[]
@@ -195,6 +241,11 @@ model User {
   builderProjects     BuilderProject[]    @relation("BuilderProjectOwner")
   projectBookings     ProjectBooking[]    @relation("ProjectBookingBuyer")
   organizationInvitesCreated OrganizationInvite[] @relation("InviteCreatedBy")
+  complianceAlertsResolved  ComplianceAlert[]     @relation("ComplianceAlertResolvedBy")
+  ddCasesOwned              DueDiligenceCase[]    @relation("DdCaseOwner")
+  ddItemsAssigned           DueDiligenceItem[]    @relation("DdItemAssignee")
+  ddEvidenceUploaded        DueDiligenceEvidence[]
+  ddEventsAuthored          DueDiligenceEvent[]
 }
 
 model Organization {
@@ -210,7 +261,9 @@ model Organization {
   leads           Lead[]
   deals           Deal[]
   properties      Property[]
-  serviceRequests ServiceRequest[]
+  serviceRequests    ServiceRequest[]
+  complianceAlerts   ComplianceAlert[]
+  dueDiligenceCases  DueDiligenceCase[]
 }
 
 model OrganizationMember {
@@ -258,6 +311,7 @@ model Property {
   addressPrivate   String
   latitude         Float
   longitude        Float
+  location         Json?
   trustScore       Float        @default(0)
   status           String       @default("active")
   distressedLabel  String       @default("standard")
@@ -285,6 +339,7 @@ model Requirement {
   budgetMax    Decimal      @db.Decimal(18, 2)
   city         String
   areas        String[]
+  location     Json?
   propertyType PropertyType
   dealType     DealType
   areaSqftMin  Float
@@ -341,6 +396,7 @@ model Deal {
   institutionalStage Int?
   coBrokerInviteEmail String?
   commissionSplitPct  Float?
+  stageTasks        Json?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
@@ -354,6 +410,46 @@ model Deal {
   escrowAccount  EscrowAccount?
   invoices       Invoice[]
   chatThread     ChatThread?
+  offers         DealOffer[]
+  complianceAlerts ComplianceAlert[]
+  dueDiligenceCases DueDiligenceCase[]
+}
+
+model ComplianceAlert {
+  id               String                 @id @default(cuid())
+  dealId           String
+  organizationId   String
+  type             ComplianceAlertType
+  severity         ComplianceAlertSeverity
+  status           ComplianceAlertStatus  @default(OPEN)
+  title            String
+  body             String
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+  resolvedAt       DateTime?
+  resolvedByUserId String?
+
+  deal         Deal         @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  resolvedBy   User?        @relation("ComplianceAlertResolvedBy", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([dealId, type])
+  @@index([organizationId, status])
+  @@index([dealId])
+}
+
+model DealOffer {
+  id         String   @id @default(cuid())
+  dealId      String
+  offeredById String
+  amountInr   Decimal  @db.Decimal(18, 2)
+  notes       String?
+  createdAt   DateTime @default(now())
+
+  deal      Deal @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  offeredBy User @relation(fields: [offeredById], references: [id], onDelete: Cascade)
+
+  @@index([dealId, createdAt])
 }
 
 model ChatThread {
@@ -559,6 +655,7 @@ model Institution {
   ndas      Nda[]
   deals     Deal[]
   documents Document[]
+  dueDiligenceCases DueDiligenceCase[]
 }
 
 model Nda {
@@ -566,11 +663,20 @@ model Nda {
   userId        String
   institutionId String
   status        String
+  purpose       String?
+  budgetMin     Float?
+  budgetMax     Float?
+  organizationName String?
+  requestedAt   DateTime?
   signedAt      DateTime?
   ipAddress     String?
+  reviewedById  String?
+  reviewedAt    DateTime?
+  reviewNote    String?
 
   user        User        @relation(fields: [userId], references: [id])
   institution Institution @relation(fields: [institutionId], references: [id])
+  reviewedBy  User?       @relation("NdaReviewedBy", fields: [reviewedById], references: [id])
 
   @@unique([userId, institutionId])
 }
@@ -590,6 +696,89 @@ model Document {
   deal        Deal?        @relation(fields: [dealId], references: [id])
   institution Institution? @relation(fields: [institutionId], references: [id])
   uploadedBy  User         @relation(fields: [uploadedById], references: [id])
+  ddEvidence  DueDiligenceEvidence[]
+}
+
+model DueDiligenceCase {
+  id            String      @id @default(cuid())
+  dealId         String?
+  institutionId  String?
+  organizationId String?
+  status         DdCaseStatus @default(OPEN)
+  ownerUserId    String?
+  summary        String?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  completedAt    DateTime?
+
+  deal        Deal?        @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  institution Institution? @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  owner       User?        @relation("DdCaseOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
+  items       DueDiligenceItem[]
+  events      DueDiligenceEvent[]
+
+  @@unique([dealId])
+  @@unique([institutionId])
+  @@index([organizationId, status])
+}
+
+model DueDiligenceItem {
+  id             String      @id @default(cuid())
+  caseId          String
+  key             String
+  label           String
+  required        Boolean     @default(true)
+  status          DdItemStatus @default(OPEN)
+  assigneeUserId  String?
+  dueAt           DateTime?
+  notes           String?
+  sortOrder       Int         @default(0)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  completedAt     DateTime?
+
+  ddCase    DueDiligenceCase     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  assignee  User?                @relation("DdItemAssignee", fields: [assigneeUserId], references: [id], onDelete: SetNull)
+  evidence  DueDiligenceEvidence[]
+  events    DueDiligenceEvent[]
+
+  @@unique([caseId, key])
+  @@index([caseId, status, sortOrder])
+}
+
+model DueDiligenceEvidence {
+  id               String    @id @default(cuid())
+  itemId            String
+  documentId        String?
+  uploadedByUserId  String
+  kind              String
+  title             String?
+  url               String?
+  notes             String?
+  createdAt         DateTime @default(now())
+
+  item       DueDiligenceItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  document   Document?        @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  uploadedBy User             @relation(fields: [uploadedByUserId], references: [id], onDelete: Cascade)
+
+  @@index([itemId, createdAt])
+}
+
+model DueDiligenceEvent {
+  id         String      @id @default(cuid())
+  caseId      String
+  itemId      String?
+  actorUserId String?
+  type        DdEventType
+  detail      Json?
+  createdAt   DateTime    @default(now())
+
+  ddCase DueDiligenceCase  @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  item   DueDiligenceItem? @relation(fields: [itemId], references: [id], onDelete: SetNull)
+  actor  User?             @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([caseId, createdAt])
 }
 
 model ActivityLog {
@@ -605,37 +794,69 @@ model ActivityLog {
   user User? @relation(fields: [userId], references: [id])
 }
 
+enum NotificationType {
+  MATCH
+  NDA
+  DEAL
+  ALERT
+}
+
 model Notification {
-  id        String   @id @default(cuid())
+  id        String            @id @default(cuid())
   userId    String
   channel   String
+  type      NotificationType  @default(ALERT)
   title     String
   body      String
-  read      Boolean  @default(false)
-  createdAt DateTime @default(now())
+  read      Boolean           @default(false)
+  metadata  Json?
+  createdAt DateTime          @default(now())
 
   user User @relation(fields: [userId], references: [id])
+  @@index([userId, read, createdAt])
+  @@index([userId, type])
 }
 
 model Partner {
   id        String   @id @default(cuid())
   type      String
   name      String
+  phone     String?
+  email     String?
+  city      String?
   verified  Boolean  @default(false)
   createdAt DateTime @default(now())
+
+  serviceRequests ServiceRequest[]
+}
+
+enum ServiceRequestStatus {
+  OPEN
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
 }
 
 model ServiceRequest {
-  id             String   @id @default(cuid())
-  organizationId String
-  dealId         String?
-  type           String
-  status         String   @default("open")
-  partnerId      String?
-  createdAt      DateTime @default(now())
+  id              String               @id @default(cuid())
+  organizationId  String
+  dealId          String?
+  type            String
+  status          ServiceRequestStatus @default(OPEN)
+  partnerId       String?
+  createdByUserId String?
+  /// Audit trail: JSON array of { at, userId, userName?, action, detail?, from?, to?, partnerId?, partnerName? }
+  requestHistory  Json?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id])
-  deal         Deal?        @relation(fields: [dealId], references: [id])
+  deal         Deal?          @relation(fields: [dealId], references: [id])
+  partner      Partner?       @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+  createdBy    User?          @relation("ServiceRequestCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([dealId, status])
+  @@index([organizationId, createdAt])
 }
 
 model NriProfile {

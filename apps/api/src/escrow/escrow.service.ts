@@ -10,6 +10,7 @@ import {
 import {
   EscrowStatus,
   EscrowTransactionType,
+  NotificationType,
   UserRole,
 } from '@prisma/client';
 import { ChatService } from '../chat/chat.service';
@@ -330,8 +331,10 @@ export class EscrowService {
         data: {
           userId: a.id,
           channel: 'in_app',
+          type: NotificationType.ALERT,
           title: 'Escrow payout required',
           body: `Deal ${short}… — pay seller ₹${formatted} outside the app, then confirm reference under Admin → Escrow.`,
+          metadata: { dealId },
         },
       });
     }
@@ -403,6 +406,108 @@ export class EscrowService {
       }),
     ]);
     return { ok: true, status: EscrowStatus.FROZEN };
+  }
+
+  async raiseDispute(dealId: string, actorUserId: string, reason: string) {
+    const deal = await this.assertDealAccess(dealId, actorUserId);
+    const escrow = await this.prisma.escrowAccount.findUnique({
+      where: { dealId },
+    });
+    if (!escrow) throw new NotFoundException('No escrow for this deal');
+    if (
+      escrow.status !== EscrowStatus.HELD &&
+      escrow.status !== EscrowStatus.PENDING_PAYOUT
+    ) {
+      throw new BadRequestException('Escrow cannot be disputed in current state');
+    }
+    const member = await this.prisma.organizationMember.findFirst({
+      where: { organizationId: deal.organizationId, userId: actorUserId },
+      select: { id: true },
+    });
+    if (!member && deal.requirement.userId !== actorUserId) {
+      throw new ForbiddenException('No access to dispute this escrow');
+    }
+    const next = await this.prisma.escrowAccount.update({
+      where: { id: escrow.id },
+      data: { status: EscrowStatus.DISPUTED },
+    });
+    await this.prisma.escrowTransaction.create({
+      data: {
+        escrowAccountId: escrow.id,
+        type: EscrowTransactionType.FREEZE,
+        amountPaise: escrow.amountPaise,
+        fromUserId: actorUserId,
+        notes: reason?.trim() || 'Escrow dispute raised',
+      },
+    });
+    return { ok: true, status: next.status };
+  }
+
+  async resolveDispute(
+    dealId: string,
+    adminUserId: string,
+    outcome: 'RELEASE' | 'REFUND',
+    note: string,
+  ) {
+    const admin = await this.prisma.user.findUnique({
+      where: { id: adminUserId },
+      select: { role: true },
+    });
+    if (admin?.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('Admin only');
+    }
+    const escrow = await this.prisma.escrowAccount.findUnique({
+      where: { dealId },
+    });
+    if (!escrow) throw new NotFoundException('No escrow for this deal');
+    if (escrow.status !== EscrowStatus.DISPUTED) {
+      throw new BadRequestException('Escrow is not in disputed state');
+    }
+    if (outcome === 'RELEASE') {
+      const now = new Date();
+      await this.prisma.$transaction([
+        this.prisma.escrowAccount.update({
+          where: { id: escrow.id },
+          data: {
+            status: EscrowStatus.RELEASED,
+            releasedAt: now,
+            payoutReference: note?.trim() || 'DISPUTE_RELEASE',
+          },
+        }),
+        this.prisma.escrowTransaction.create({
+          data: {
+            escrowAccountId: escrow.id,
+            type: EscrowTransactionType.RELEASE,
+            amountPaise: escrow.amountPaise,
+            fromUserId: adminUserId,
+            toUserId: escrow.beneficiaryId,
+            notes: note?.trim() || 'Dispute resolved with seller release',
+          },
+        }),
+      ]);
+      return { ok: true, status: EscrowStatus.RELEASED };
+    }
+    const now = new Date();
+    await this.prisma.$transaction([
+      this.prisma.escrowAccount.update({
+        where: { id: escrow.id },
+        data: {
+          status: EscrowStatus.REFUNDED,
+          refundedAt: now,
+        },
+      }),
+      this.prisma.escrowTransaction.create({
+        data: {
+          escrowAccountId: escrow.id,
+          type: EscrowTransactionType.REFUND,
+          amountPaise: escrow.amountPaise,
+          fromUserId: adminUserId,
+          toUserId: escrow.holderId,
+          notes: note?.trim() || 'Dispute resolved with buyer refund',
+        },
+      }),
+    ]);
+    return { ok: true, status: EscrowStatus.REFUNDED };
   }
 
   async getEscrowStatus(dealId: string, userId: string) {

@@ -7,11 +7,13 @@ import { validatePublishableTextParts } from '@ar-buildwel/shared';
  */
 @Injectable()
 export class ContactPolicyService {
+  private readonly violationMessage = 'CONTACT_DETAILS_NOT_ALLOWED';
+
   assertRequirementPublicSurfaces(city: string, areas: string[] | undefined): void {
     const parts = [city, ...(areas ?? [])];
     const r = validatePublishableTextParts(parts);
     if (!r.ok) {
-      throw new BadRequestException(r.reason);
+      throw new BadRequestException(this.violationMessage);
     }
   }
 
@@ -24,7 +26,7 @@ export class ContactPolicyService {
     const combined = `${input.title}\n${input.description ?? ''}\n${input.areaPublic}\n${input.localityPublic}`;
     const r = validatePublishableTextParts([combined]);
     if (!r.ok) {
-      throw new BadRequestException(r.reason);
+      throw new BadRequestException(this.violationMessage);
     }
   }
 }

@@ -3,11 +3,12 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { Bell, Gavel, Search, TrendingUp } from "lucide-react";
+import { Bell, Building2, Gavel, IndianRupee, MapPin, Maximize2, Search, SlidersHorizontal, TrendingUp } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import { apiFetch, apiFetchJsonWithHeaders } from "@/lib/api";
-import { formatINR } from "@/lib/format";
+import { pickPrimaryImageUrl } from "@/lib/property-images";
+import { formatINR, formatPriceFilterPreview } from "@/lib/format";
 import toast from "react-hot-toast";
 
 type SearchSortMode = "relevance" | "price_asc" | "price_desc" | "newest";
@@ -20,6 +21,7 @@ type Hit = {
   areaSqft: number;
   distressedLabel?: string;
   _score?: number;
+  imageUrls?: string[];
 };
 type Saved = { id: string; name: string; filters: unknown; createdAt: string };
 
@@ -37,7 +39,6 @@ type FiltersState = {
   minAreaSqft: string;
   maxAreaSqft: string;
   isBankAuction: BankAuctionOpt;
-  distressedLabel: string;
   lat: string;
   lon: string;
   radiusKm: string;
@@ -62,7 +63,6 @@ const emptyFilters = (): FiltersState => ({
   minAreaSqft: "",
   maxAreaSqft: "",
   isBankAuction: "",
-  distressedLabel: "",
   lat: "",
   lon: "",
   radiusKm: "",
@@ -85,10 +85,15 @@ function filtersToSearchParams(f: FiltersState): URLSearchParams {
   if (f.isBankAuction === "true" || f.isBankAuction === "false") {
     p.set("isBankAuction", f.isBankAuction);
   }
-  if (f.distressedLabel.trim()) p.set("distressedLabel", f.distressedLabel.trim());
-  if (f.lat.trim() && Number.isFinite(Number(f.lat))) p.set("lat", String(Number(f.lat)));
-  if (f.lon.trim() && Number.isFinite(Number(f.lon))) p.set("lon", String(Number(f.lon)));
-  if (f.radiusKm.trim() && Number.isFinite(Number(f.radiusKm))) p.set("radiusKm", String(Number(f.radiusKm)));
+  const latN = f.lat.trim() ? Number(f.lat) : NaN;
+  const lonN = f.lon.trim() ? Number(f.lon) : NaN;
+  if (Number.isFinite(latN) && Number.isFinite(lonN)) {
+    p.set("lat", String(latN));
+    p.set("lon", String(lonN));
+    if (f.radiusKm.trim() && Number.isFinite(Number(f.radiusKm))) {
+      p.set("radiusKm", String(Number(f.radiusKm)));
+    }
+  }
   return p;
 }
 
@@ -116,7 +121,6 @@ function filtersToSavePayload(f: FiltersState): Record<string, unknown> {
   }
   if (f.isBankAuction === "true") o.isBankAuction = true;
   if (f.isBankAuction === "false") o.isBankAuction = false;
-  if (f.distressedLabel.trim()) o.distressedLabel = f.distressedLabel.trim();
   return o;
 }
 
@@ -138,9 +142,6 @@ function summarizeSavedFilters(filters: unknown): string {
   }
   if (o.isBankAuction === true) parts.push("bank auction");
   if (o.isBankAuction === false) parts.push("not auction");
-  if (typeof o.distressedLabel === "string" && o.distressedLabel) {
-    parts.push(`label:${o.distressedLabel}`);
-  }
   return parts.length ? parts.join(" · ") : "(no filters)";
 }
 
@@ -164,6 +165,7 @@ export default function SearchPage() {
   const [activeFacetType, setActiveFacetType] = useState("");
   const [activeFacetCity, setActiveFacetCity] = useState("");
   const [kwSuggestions, setKwSuggestions] = useState<string[]>([]);
+  const [citySuggestions, setCitySuggestions] = useState<string[]>([]);
   const { refetch: refreshSaved } = useQuery({
     queryKey: ["saved-searches", token],
     enabled: Boolean(token),
@@ -193,6 +195,22 @@ export default function SearchPage() {
     }, 280);
     return () => window.clearTimeout(id);
   }, [f.q]);
+
+  useEffect(() => {
+    const cityQ = f.city.trim();
+    if (cityQ.length < 1) {
+      setCitySuggestions([]);
+      return;
+    }
+    const id = window.setTimeout(() => {
+      void apiFetch<string[]>(
+        `/search/autocomplete?${new URLSearchParams({ q: cityQ, field: "city" })}`,
+      )
+        .then((rows) => setCitySuggestions((rows ?? []).slice(0, 8)))
+        .catch(() => setCitySuggestions([]));
+    }, 220);
+    return () => window.clearTimeout(id);
+  }, [f.city]);
 
   async function runSearch(nextPage?: number, explicitSort?: SearchSortMode) {
     const pnum = nextPage ?? page;
@@ -289,6 +307,9 @@ export default function SearchPage() {
       ? hits.filter((h) => String(h.distressedLabel ?? "").toLowerCase() !== "disputed")
       : hits;
 
+  const minPricePreview = formatPriceFilterPreview(f.minPrice);
+  const maxPricePreview = formatPriceFilterPreview(f.maxPrice);
+
   function applySavedToForm(filters: unknown) {
     const base = emptyFilters();
     if (!filters || typeof filters !== "object" || Array.isArray(filters)) {
@@ -313,7 +334,6 @@ export default function SearchPage() {
       maxAreaSqft: o.maxAreaSqft != null ? String(o.maxAreaSqft) : "",
       isBankAuction:
         o.isBankAuction === true ? "true" : o.isBankAuction === false ? "false" : "",
-      distressedLabel: typeof o.distressedLabel === "string" ? o.distressedLabel : "",
       lat: o.lat != null ? String(o.lat) : "",
       lon: o.lon != null ? String(o.lon) : "",
       radiusKm: o.radiusKm != null ? String(o.radiusKm) : "",
@@ -356,7 +376,11 @@ export default function SearchPage() {
               : "Search across all active listings."}
       </p>
 
-      <div className="mt-6 space-y-4 rounded-lg border border-zinc-800 bg-zinc-900/40 p-4">
+      <div className="mt-6 space-y-4 rounded-xl border border-zinc-800 bg-zinc-900/40 p-4">
+        <p className="inline-flex items-center gap-2 text-sm font-medium text-white">
+          <SlidersHorizontal className="h-4 w-4 text-[#00C49A]" />
+          Search filters
+        </p>
         <div className="relative">
           <label className="text-xs font-medium text-zinc-500">Keywords</label>
           <input
@@ -386,26 +410,42 @@ export default function SearchPage() {
           ) : null}
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
-          <div>
+          <div className="relative">
             <label className="text-xs font-medium text-zinc-500">City contains</label>
-            <input
-              className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
-              placeholder="e.g. Mumbai"
-              value={f.city}
-              onChange={(e) => setF((s) => ({ ...s, city: e.target.value }))}
-            />
+            <div className="mt-1 flex items-center rounded border border-zinc-700 bg-zinc-900">
+              <MapPin className="ml-2 h-4 w-4 text-zinc-500" />
+              <input
+                className="w-full bg-transparent px-3 py-2 text-sm outline-none"
+                placeholder="e.g. Mumbai"
+                value={f.city}
+                onChange={(e) => setF((s) => ({ ...s, city: e.target.value }))}
+                autoComplete="off"
+              />
+            </div>
+            {citySuggestions.length > 0 ? (
+              <ul className="absolute left-0 right-0 top-full z-20 mt-1 max-h-44 overflow-auto rounded border border-zinc-700 bg-zinc-900 py-1 text-sm shadow-lg">
+                {citySuggestions.map((city, i) => (
+                  <li key={`${city}-${i}`}>
+                    <button
+                      type="button"
+                      className="w-full px-3 py-1.5 text-left text-zinc-200 hover:bg-zinc-800"
+                      onClick={() => {
+                        setF((prev) => ({ ...prev, city }));
+                        setCitySuggestions([]);
+                      }}
+                    >
+                      {city}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
           </div>
           <div>
-            <label className="text-xs font-medium text-zinc-500">Distressed label</label>
-            <input
-              className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
-              placeholder="e.g. standard"
-              value={f.distressedLabel}
-              onChange={(e) => setF((s) => ({ ...s, distressedLabel: e.target.value }))}
-            />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-zinc-500">Property type</label>
+            <label className="inline-flex items-center gap-1 text-xs font-medium text-zinc-500">
+              <Building2 className="h-3.5 w-3.5" />
+              Property type
+            </label>
             <select
               className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
               value={f.propertyType}
@@ -433,7 +473,10 @@ export default function SearchPage() {
             </select>
           </div>
           <div>
-            <label className="text-xs font-medium text-zinc-500">Min price</label>
+            <label className="inline-flex items-center gap-1 text-xs font-medium text-zinc-500">
+              <IndianRupee className="h-3.5 w-3.5" />
+              Min price
+            </label>
             <input
               type="number"
               min={0}
@@ -441,9 +484,20 @@ export default function SearchPage() {
               value={f.minPrice}
               onChange={(e) => setF((s) => ({ ...s, minPrice: e.target.value }))}
             />
+            {minPricePreview ? (
+              <p className="mt-1 text-[11px] leading-snug text-zinc-500">
+                <span className="font-medium text-[#00C49A]">{minPricePreview.compact}</span>
+                {minPricePreview.compact !== minPricePreview.full ? (
+                  <span className="text-zinc-600"> · {minPricePreview.full}</span>
+                ) : null}
+              </p>
+            ) : null}
           </div>
           <div>
-            <label className="text-xs font-medium text-zinc-500">Max price</label>
+            <label className="inline-flex items-center gap-1 text-xs font-medium text-zinc-500">
+              <IndianRupee className="h-3.5 w-3.5" />
+              Max price
+            </label>
             <input
               type="number"
               min={0}
@@ -451,9 +505,20 @@ export default function SearchPage() {
               value={f.maxPrice}
               onChange={(e) => setF((s) => ({ ...s, maxPrice: e.target.value }))}
             />
+            {maxPricePreview ? (
+              <p className="mt-1 text-[11px] leading-snug text-zinc-500">
+                <span className="font-medium text-[#00C49A]">{maxPricePreview.compact}</span>
+                {maxPricePreview.compact !== maxPricePreview.full ? (
+                  <span className="text-zinc-600"> · {maxPricePreview.full}</span>
+                ) : null}
+              </p>
+            ) : null}
           </div>
           <div>
-            <label className="text-xs font-medium text-zinc-500">Min area (sqft)</label>
+            <label className="inline-flex items-center gap-1 text-xs font-medium text-zinc-500">
+              <Maximize2 className="h-3.5 w-3.5" />
+              Min area (sqft)
+            </label>
             <input
               type="number"
               min={0}
@@ -463,7 +528,10 @@ export default function SearchPage() {
             />
           </div>
           <div>
-            <label className="text-xs font-medium text-zinc-500">Max area (sqft)</label>
+            <label className="inline-flex items-center gap-1 text-xs font-medium text-zinc-500">
+              <Maximize2 className="h-3.5 w-3.5" />
+              Max area (sqft)
+            </label>
             <input
               type="number"
               min={0}
@@ -489,7 +557,7 @@ export default function SearchPage() {
             </div>
           ) : null}
           <div>
-            <label className="text-xs font-medium text-zinc-500">Latitude</label>
+            <label className="text-xs font-medium text-zinc-500">Latitude (optional)</label>
             <input
               type="number"
               step="any"
@@ -499,7 +567,7 @@ export default function SearchPage() {
             />
           </div>
           <div>
-            <label className="text-xs font-medium text-zinc-500">Longitude</label>
+            <label className="text-xs font-medium text-zinc-500">Longitude (optional)</label>
             <input
               type="number"
               step="any"
@@ -678,22 +746,58 @@ export default function SearchPage() {
           </aside>
         ) : null}
 
-        <ul className="space-y-2 text-sm">
-          {displayHits.map((h) => (
-            <li key={h.id}>
-              <Link href={`/properties/${h.id}`} className="text-teal-400 hover:underline">
-                {h.title}
+        <div className="space-y-3">
+          {displayHits.length === 0 ? (
+            <div className="rounded-lg border border-zinc-800 bg-zinc-900/30 p-4 text-sm text-zinc-500">
+              No matching listings yet. Try changing city, budget, or property type.
+            </div>
+          ) : null}
+          {displayHits.map((h) => {
+            const imageUrl = pickPrimaryImageUrl(h.imageUrls) || "/placeholder-property.png";
+            return (
+              <Link
+                key={h.id}
+                href={`/properties/${h.id}`}
+                className="block overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/40 transition hover:border-zinc-700"
+              >
+                <div className="grid gap-0 sm:grid-cols-[180px,1fr]">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={imageUrl}
+                    alt={h.title}
+                    className="h-36 w-full object-cover sm:h-full"
+                    onError={(e) => {
+                      e.currentTarget.onerror = null;
+                      e.currentTarget.src = "/placeholder-property.png";
+                    }}
+                  />
+                  <div className="space-y-2 p-4">
+                    <p className="line-clamp-1 text-base font-semibold text-white">{h.title}</p>
+                    <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-400">
+                      <span className="inline-flex items-center gap-1">
+                        <MapPin className="h-3.5 w-3.5 text-zinc-500" />
+                        {h.city}
+                      </span>
+                      <span className="inline-flex items-center gap-1">
+                        <IndianRupee className="h-3.5 w-3.5 text-zinc-500" />
+                        {formatINR(Number(h.price ?? 0))}
+                      </span>
+                      <span className="inline-flex items-center gap-1">
+                        <Maximize2 className="h-3.5 w-3.5 text-zinc-500" />
+                        {h.areaSqft} sqft
+                      </span>
+                      {sort === "relevance" && typeof h._score === "number" ? (
+                        <span className="rounded-full border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-300">
+                          score {h._score.toFixed(2)}
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
               </Link>
-              <span className="text-zinc-500">
-                {" "}
-                · {h.city} · {formatINR(Number(h.price ?? 0))} · {h.areaSqft} sqft
-                {sort === "relevance" && typeof h._score === "number" ? (
-                  <span className="text-zinc-600"> · score {h._score.toFixed(2)}</span>
-                ) : null}
-              </span>
-            </li>
-          ))}
-        </ul>
+            );
+          })}
+        </div>
       </div>
 
       {total != null && total > PAGE_LIMIT ? (

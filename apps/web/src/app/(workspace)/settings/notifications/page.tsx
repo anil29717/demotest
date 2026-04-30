@@ -10,6 +10,12 @@ type Prefs = {
   dailyDigest?: boolean;
   matchAlerts?: boolean;
   slaWarnings?: boolean;
+  /** NDA approved / declined and related confidentiality alerts */
+  ndaAlerts?: boolean;
+  /** Deal pipeline stage changes */
+  dealAlerts?: boolean;
+  /** SLA, daily digest row, chat when away, admin/system alerts */
+  alertAlerts?: boolean;
   digestHourLocal?: number;
   digestMinuteLocal?: number;
   whatsappDigest?: boolean;
@@ -85,8 +91,11 @@ export default function NotificationSettingsPage() {
   return (
     <div className="mx-auto max-w-lg text-sm">
       <h1 className="inline-flex items-center gap-2 text-xl font-semibold"><SlidersHorizontal className="h-5 w-5 text-[#00C49A]" />Alert preferences</h1>
-      <p className="mt-1 text-zinc-500">Control digest, match alerts, and SLA warnings.</p>
+      <p className="mt-1 text-zinc-500">
+        Control digest, channels, and which in-app notification categories you receive.
+      </p>
       <div className="mt-6 space-y-3">
+        <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Digest &amp; email</p>
         {(["dailyDigest", "matchAlerts", "slaWarnings"] as const).map((k) => (
           <label key={k} className="flex items-center gap-2">
             <input
@@ -97,6 +106,39 @@ export default function NotificationSettingsPage() {
             <span className="capitalize">{k.replace(/([A-Z])/g, " $1").trim()}</span>
           </label>
         ))}
+        <p className="pt-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
+          In-app (other categories)
+        </p>
+        <p className="text-xs text-zinc-600">
+          &quot;Match alerts&quot; above controls match and saved-search notifications. Use these for NDA, deal
+          stage, and general alerts.
+        </p>
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={prefs.ndaAlerts !== false}
+            onChange={(e) => setPrefs((p) => ({ ...p, ndaAlerts: e.target.checked }))}
+          />
+          <span>NDA — approvals and declines</span>
+        </label>
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={prefs.dealAlerts !== false}
+            onChange={(e) => setPrefs((p) => ({ ...p, dealAlerts: e.target.checked }))}
+          />
+          <span>Deals — pipeline stage changes</span>
+        </label>
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={prefs.alertAlerts !== false}
+            onChange={(e) => setPrefs((p) => ({ ...p, alertAlerts: e.target.checked }))}
+          />
+          <span>
+            Alerts — SLA warnings, chat when you&apos;re away, WhatsApp routing, admin notices
+          </span>
+        </label>
         {user?.role === "SELLER" ? (
           <div className="grid gap-2 rounded border border-[#1f1f1f] bg-[#111111] p-3 text-xs text-[#888]">
             <p className="inline-flex items-center gap-2"><Zap className="h-3.5 w-3.5 text-[#00C49A]" />Match alerts — New buyers matched to your listings</p>

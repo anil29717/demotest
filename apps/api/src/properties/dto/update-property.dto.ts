@@ -14,6 +14,42 @@ import {
 } from 'class-validator';
 import { DealType, PropertyType } from '@prisma/client';
 
+class LocationDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  place_name?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  city?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  area?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  state?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(-90)
+  @Max(90)
+  lat?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(-180)
+  @Max(180)
+  lng?: number;
+}
+
 export class UpdatePropertyDto {
   @IsOptional()
   @IsString()
@@ -82,7 +118,10 @@ export class UpdatePropertyDto {
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(20)
-  @IsUrl({ protocols: ['https'], require_protocol: true }, { each: true })
+  @IsUrl(
+    { protocols: ['https', 'http'], require_protocol: true, require_tld: false },
+    { each: true },
+  )
   imageUrls?: string[];
 
   @IsOptional()
@@ -92,4 +131,7 @@ export class UpdatePropertyDto {
   @IsOptional()
   @IsBoolean()
   isBankAuction?: boolean;
+
+  @IsOptional()
+  location?: LocationDto;
 }

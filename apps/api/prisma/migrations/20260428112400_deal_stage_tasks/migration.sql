@@ -1,0 +1,2 @@
+ALTER TABLE "Deal"
+ADD COLUMN "stageTasks" JSONB;

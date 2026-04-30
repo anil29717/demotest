@@ -90,6 +90,31 @@ export class EscrowController {
     return this.escrow.freezeEscrow(dealId);
   }
 
+  @Post('deals/:dealId/dispute')
+  @Roles(UserRole.ADMIN, UserRole.BROKER, UserRole.BUYER)
+  disputeEscrow(
+    @Param('dealId') dealId: string,
+    @CurrentUser() user: JwtPayloadUser,
+    @Body() body: { reason?: string },
+  ) {
+    return this.escrow.raiseDispute(dealId, user.sub, body.reason ?? '');
+  }
+
+  @Post('deals/:dealId/resolve-dispute')
+  @Roles(UserRole.ADMIN)
+  resolveDispute(
+    @Param('dealId') dealId: string,
+    @CurrentUser() user: JwtPayloadUser,
+    @Body() body: { outcome?: 'RELEASE' | 'REFUND'; note?: string },
+  ) {
+    return this.escrow.resolveDispute(
+      dealId,
+      user.sub,
+      body.outcome ?? 'REFUND',
+      body.note ?? '',
+    );
+  }
+
   @Get('deals/:dealId')
   @Roles(UserRole.ADMIN, UserRole.BROKER, UserRole.BUYER)
   getEscrowStatus(

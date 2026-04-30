@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/auth-context";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, getUserFacingErrorMessage } from "@/lib/api";
 
 type OrgMine = {
   id: string;
@@ -64,7 +64,7 @@ export function NewDealForm() {
       });
       router.push("/deals");
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Error");
+      setErr(getUserFacingErrorMessage(e, "Could not create deal. Please check IDs and try again."));
     }
   }
 
@@ -78,8 +78,8 @@ export function NewDealForm() {
     );
 
   return (
-    <div className="mx-auto max-w-lg">
-      <h1 className="text-xl font-semibold">Create deal</h1>
+    <div className="mx-auto max-w-2xl">
+      <h1 className="text-2xl font-semibold text-zinc-100">Create deal</h1>
       <p className="mt-1 text-sm text-zinc-500">
         Requires an organization.{" "}
         <Link href="/organizations/setup" className="text-teal-400">
@@ -87,7 +87,7 @@ export function NewDealForm() {
         </Link>
         .
       </p>
-      <form onSubmit={submit} className="mt-6 space-y-3 text-sm">
+      <form onSubmit={submit} className="mt-6 space-y-4 rounded-xl border border-zinc-800 bg-zinc-900/30 p-5 text-sm">
         <label className="block">
           Organization
           <select
@@ -108,7 +108,7 @@ export function NewDealForm() {
           Requirement ID
           <input
             required
-            className="mt-1 w-full font-mono text-xs"
+            className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-xs text-zinc-100"
             value={form.requirementId}
             onChange={(e) => setForm((f) => ({ ...f, requirementId: e.target.value }))}
           />
@@ -116,7 +116,7 @@ export function NewDealForm() {
         <label className="block">
           Property ID (optional if institutional)
           <input
-            className="mt-1 w-full font-mono text-xs"
+            className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-xs text-zinc-100"
             value={form.propertyId}
             onChange={(e) => setForm((f) => ({ ...f, propertyId: e.target.value }))}
           />
@@ -124,13 +124,13 @@ export function NewDealForm() {
         <label className="block">
           Institution ID (optional)
           <input
-            className="mt-1 w-full font-mono text-xs"
+            className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-xs text-zinc-100"
             value={form.institutionId}
             onChange={(e) => setForm((f) => ({ ...f, institutionId: e.target.value }))}
           />
         </label>
-        {err && <p className="text-red-400">{err}</p>}
-        <button type="submit" className="rounded-lg bg-teal-600 px-4 py-2 text-white">
+        {err && <p className="rounded border border-red-900/40 bg-red-950/20 px-3 py-2 text-red-300">{err}</p>}
+        <button type="submit" className="rounded-lg bg-teal-600 px-5 py-2 font-medium text-white">
           Create
         </button>
       </form>

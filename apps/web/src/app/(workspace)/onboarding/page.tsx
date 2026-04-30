@@ -528,8 +528,8 @@ export default function OnboardingPage() {
                   placeholder="Select or type city"
                 />
                 <datalist id="operating-city-options">
-                  {OPERATING_CITY_OPTIONS.map((city) => (
-                    <option key={city} value={city} />
+                  {OPERATING_CITY_OPTIONS.map((city, idx) => (
+                    <option key={`${city}-${idx}`} value={city} />
                   ))}
                 </datalist>
                 <button
@@ -544,9 +544,9 @@ export default function OnboardingPage() {
                 </button>
               </div>
               <div className="mt-2 flex flex-wrap gap-2">
-                {cities.map((city) => (
+                {cities.map((city, idx) => (
                   <button
-                    key={city}
+                    key={`${city}-${idx}`}
                     type="button"
                     onClick={() => removeTag(city, setCities, cities)}
                     className="rounded-full border border-[#333333] px-3 py-1 text-xs text-[#a3a3a3]"
@@ -564,8 +564,8 @@ export default function OnboardingPage() {
                 onChange={(e) => setPrimaryCity(e.target.value)}
               >
                 <option value="">Select</option>
-                {cities.map((city) => (
-                  <option key={city} value={city}>
+                {cities.map((city, idx) => (
+                  <option key={`${city}-${idx}`} value={city}>
                     {city}
                   </option>
                 ))}
@@ -755,9 +755,9 @@ export default function OnboardingPage() {
                 placeholder="Type city and press Enter"
               />
               <div className="mt-2 flex flex-wrap gap-2">
-                {buyerCities.map((city) => (
+                {buyerCities.map((city, idx) => (
                   <button
-                    key={city}
+                    key={`${city}-${idx}`}
                     type="button"
                     onClick={() => removeTag(city, setBuyerCities, buyerCities)}
                     className="rounded-full border border-[#333333] px-3 py-1 text-xs text-[#a3a3a3]"
@@ -871,9 +871,9 @@ export default function OnboardingPage() {
                 placeholder="Type city and press Enter"
               />
               <div className="mt-2 flex flex-wrap gap-2">
-                {hniCities.map((city) => (
+                {hniCities.map((city, idx) => (
                   <button
-                    key={city}
+                    key={`${city}-${idx}`}
                     type="button"
                     onClick={() => removeTag(city, setHniCities, hniCities)}
                     className="rounded-full border border-[#333333] px-3 py-1 text-xs text-[#a3a3a3]"

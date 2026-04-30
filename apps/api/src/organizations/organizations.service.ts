@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { OrgRole, OrganizationInviteStatus } from '@prisma/client';
+import { OrgRole, OrganizationInviteStatus, Prisma } from '@prisma/client';
 import { randomBytes, randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -124,6 +124,51 @@ export class OrganizationsService {
     };
   }
 
+  async updateOrganization(
+    userId: string,
+    organizationId: string,
+    dto: {
+      name?: string;
+      reraNumber?: string | null;
+      gstNumber?: string | null;
+    },
+  ) {
+    const member = await this.prisma.organizationMember.findFirst({
+      where: { userId, organizationId },
+      select: { role: true },
+    });
+    if (!member || member.role !== OrgRole.ADMIN) {
+      throw new BadRequestException(
+        'Only an organization admin can update firm details',
+      );
+    }
+    const data: Prisma.OrganizationUpdateInput = {};
+    if (dto.name !== undefined) {
+      const n = dto.name.trim();
+      if (!n) throw new BadRequestException('Name cannot be empty');
+      data.name = n;
+    }
+    if (dto.reraNumber !== undefined) {
+      data.reraNumber =
+        dto.reraNumber === null || dto.reraNumber === ''
+          ? null
+          : String(dto.reraNumber).trim() || null;
+    }
+    if (dto.gstNumber !== undefined) {
+      data.gstNumber =
+        dto.gstNumber === null || dto.gstNumber === ''
+          ? null
+          : String(dto.gstNumber).trim() || null;
+    }
+    if (Object.keys(data).length === 0) {
+      throw new BadRequestException('No fields to update');
+    }
+    return this.prisma.organization.update({
+      where: { id: organizationId },
+      data,
+    });
+  }
+
   async switchActiveOrganization(userId: string, organizationId: string) {
     const membership = await this.prisma.organizationMember.findFirst({
       where: { userId, organizationId },
@@ -197,6 +242,33 @@ export class OrganizationsService {
       ...invite,
       inviteLink: `/onboarding?invite=${invite.token}`,
     }));
+  }
+
+  async revokeInvite(userId: string, inviteId: string) {
+    const invite = await this.prisma.organizationInvite.findUnique({
+      where: { id: inviteId },
+      select: { id: true, organizationId: true, status: true },
+    });
+    if (!invite) throw new BadRequestException('Invite not found');
+    const adminMembership = await this.prisma.organizationMember.findFirst({
+      where: {
+        userId,
+        organizationId: invite.organizationId,
+        role: OrgRole.ADMIN,
+      },
+      select: { id: true },
+    });
+    if (!adminMembership) {
+      throw new BadRequestException('Only organization admin can revoke invites');
+    }
+    if (invite.status !== OrganizationInviteStatus.PENDING) {
+      throw new BadRequestException('Only pending invites can be revoked');
+    }
+    await this.prisma.organizationInvite.update({
+      where: { id: invite.id },
+      data: { status: OrganizationInviteStatus.REVOKED },
+    });
+    return { ok: true, id: invite.id, status: OrganizationInviteStatus.REVOKED };
   }
 
   async joinOrganization(userId: string, dto: JoinOrgInput) {
@@ -273,5 +345,31 @@ export class OrganizationsService {
       organizationName: invite.organization.name,
       role: invite.role,
     };
+  }
+
+  async adminListOrganizations() {
+    const rows = await this.prisma.organization.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 500,
+      include: {
+        _count: {
+          select: {
+            members: true,
+            invites: true,
+            properties: true,
+            deals: true,
+            serviceRequests: true,
+          },
+        },
+      },
+    });
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      reraNumber: r.reraNumber,
+      gstNumber: r.gstNumber,
+      createdAt: r.createdAt,
+      counts: r._count,
+    }));
   }
 }

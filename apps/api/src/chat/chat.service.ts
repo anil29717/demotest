@@ -10,6 +10,7 @@ import { ConfigService } from '@nestjs/config';
 import {
   ChatMessageType,
   ChatThreadType,
+  NotificationType,
   Prisma,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -31,6 +32,37 @@ function initialsFromLabel(name: string): string {
 export class ChatService {
   private readonly logger = new Logger(ChatService.name);
 
+  private safeParticipants(input: unknown): string[] {
+    return Array.isArray(input)
+      ? input.filter((p): p is string => typeof p === 'string' && p.length > 0)
+      : [];
+  }
+
+  private async repairNullChatArrays() {
+    await this.prisma.$executeRaw`
+      UPDATE "ChatMessage"
+      SET "readBy" = '{}'::text[]
+      WHERE "readBy" IS NULL
+    `;
+    await this.prisma.$executeRaw`
+      UPDATE "ChatThread"
+      SET "participants" = '{}'::text[]
+      WHERE "participants" IS NULL
+    `;
+  }
+
+  private async withChatArrayRepair<T>(op: () => Promise<T>): Promise<T> {
+    try {
+      return await op();
+    } catch (e) {
+      await this.repairNullChatArrays();
+      this.logger.warn(
+        `Recovered chat query after repairing null arrays: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return op();
+    }
+  }
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
@@ -49,7 +81,9 @@ export class ChatService {
     if (!thread) throw new NotFoundException('Thread not found');
     this.assertParticipant(thread, userId);
 
-    const ids = thread.participants.filter((p) => p !== SYSTEM_SENDER);
+    const ids = this.safeParticipants(thread.participants).filter(
+      (p) => p !== SYSTEM_SENDER,
+    );
     const users = await this.prisma.user.findMany({
       where: { id: { in: ids } },
       select: { id: true, name: true, role: true },
@@ -90,6 +124,9 @@ export class ChatService {
     createdAt: Date;
   }) {
     const deleted = Boolean(m.deletedAt);
+    const readBy = Array.isArray(m.readBy)
+      ? m.readBy.filter((v): v is string => typeof v === 'string')
+      : [];
     return {
       id: m.id,
       threadId: m.threadId,
@@ -99,7 +136,7 @@ export class ChatService {
       fileUrl: deleted ? null : m.fileUrl,
       fileName: deleted ? null : m.fileName,
       fileSize: deleted ? null : m.fileSize,
-      readBy: m.readBy,
+      readBy,
       editedAt: m.editedAt,
       deletedAt: m.deletedAt,
       createdAt: m.createdAt,
@@ -133,8 +170,12 @@ export class ChatService {
     return [...ids];
   }
 
-  private assertParticipant(thread: { participants: string[] }, userId: string) {
-    if (!thread.participants.includes(userId)) {
+  private assertParticipant(
+    thread: { participants: string[] | null },
+    userId: string,
+  ) {
+    const participants = this.safeParticipants(thread.participants);
+    if (!participants.includes(userId)) {
       throw new ForbiddenException('Not a participant in this thread');
     }
   }
@@ -159,15 +200,17 @@ export class ChatService {
       deal.institution?.institutionName ??
       `Deal ${dealId.slice(0, 8)}`;
 
-    let thread = await this.prisma.chatThread.findUnique({
-      where: { dealId },
+    let thread = await this.withChatArrayRepair(() =>
+      this.prisma.chatThread.findUnique({
+        where: { dealId },
         include: {
-        messages: {
-          orderBy: { createdAt: 'desc' },
-          take: 50,
+          messages: {
+            orderBy: { createdAt: 'desc' },
+            take: 50,
+          },
         },
-      },
-    });
+      }),
+    );
 
     if (!thread) {
       thread = await this.prisma.chatThread.create({
@@ -187,16 +230,27 @@ export class ChatService {
     } else if (
       participants.some((p) => !thread!.participants.includes(p))
     ) {
-      thread = await this.prisma.chatThread.update({
-        where: { id: thread.id },
-        data: { participants: [...new Set([...thread.participants, ...participants])] },
-        include: {
-          messages: {
-            orderBy: { createdAt: 'desc' },
-            take: 50,
+      const threadId = thread.id;
+      const currentParticipants = this.safeParticipants(thread.participants);
+      thread = await this.withChatArrayRepair(() =>
+        this.prisma.chatThread.update({
+          where: { id: threadId },
+          data: {
+            participants: [
+              ...new Set([
+                ...currentParticipants,
+                ...participants,
+              ]),
+            ],
           },
-        },
-      });
+          include: {
+            messages: {
+              orderBy: { createdAt: 'desc' },
+              take: 50,
+            },
+          },
+        }),
+      );
     }
 
     const messagesAsc = [...thread.messages].reverse().map((m) => this.serializeMessage(m));
@@ -205,7 +259,7 @@ export class ChatService {
         id: thread.id,
         dealId: thread.dealId,
         threadType: thread.threadType,
-        participants: thread.participants,
+        participants: this.safeParticipants(thread.participants),
         title: thread.title,
         lastMessageAt: thread.lastMessageAt,
         createdAt: thread.createdAt,
@@ -235,22 +289,24 @@ export class ChatService {
         },
       }));
 
-    const full = await this.prisma.chatThread.findUniqueOrThrow({
-      where: { id: thread.id },
-      include: {
-        messages: {
-          orderBy: { createdAt: 'desc' },
-          take: 50,
+    const full = await this.withChatArrayRepair(() =>
+      this.prisma.chatThread.findUniqueOrThrow({
+        where: { id: thread.id },
+        include: {
+          messages: {
+            orderBy: { createdAt: 'desc' },
+            take: 50,
+          },
         },
-      },
-    });
+      }),
+    );
     const messagesAsc = [...full.messages].reverse().map((m) => this.serializeMessage(m));
     return {
       thread: {
         id: full.id,
         dealId: full.dealId,
         threadType: full.threadType,
-        participants: full.participants,
+        participants: this.safeParticipants(full.participants),
         title: full.title,
         lastMessageAt: full.lastMessageAt,
         createdAt: full.createdAt,
@@ -300,11 +356,25 @@ export class ChatService {
         : {}),
     };
 
-    const rows = await this.prisma.chatMessage.findMany({
-      where,
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      take: limit + 1,
-    });
+    let rows;
+    try {
+      rows = await this.prisma.chatMessage.findMany({
+        where,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: limit + 1,
+      });
+    } catch (e) {
+      // Defensive repair for legacy/null array values that can break Prisma decoding.
+      await this.repairNullChatArrays();
+      rows = await this.prisma.chatMessage.findMany({
+        where,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: limit + 1,
+      });
+      this.logger.warn(
+        `Recovered getThreadMessages(${threadId}) after repairing null chat arrays: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
     const hasMore = rows.length > limit;
     const page = hasMore ? rows.slice(0, limit) : rows;
     const ordered = [...page].reverse();
@@ -360,10 +430,12 @@ export class ChatService {
             data: {
               userId: uid,
               channel: 'in_app',
+              type: NotificationType.ALERT,
               title: 'New chat message',
               body:
                 content.slice(0, 120) ||
                 (file?.fileName ? `Attachment: ${file.fileName}` : 'New message'),
+              metadata: { threadId },
             },
           });
         } catch (e) {
@@ -399,27 +471,29 @@ export class ChatService {
   }
 
   async getUserThreads(userId: string) {
-    const threads = await this.prisma.chatThread.findMany({
-      where: { participants: { has: userId } },
-      orderBy: { lastMessageAt: 'desc' },
-      include: {
-        messages: {
-          orderBy: { createdAt: 'desc' },
-          take: 1,
-        },
-        deal: {
-          select: {
-            id: true,
-            property: { select: { id: true, title: true } },
-            institution: { select: { id: true, institutionName: true } },
+    const threads = await this.withChatArrayRepair(() =>
+      this.prisma.chatThread.findMany({
+        where: { participants: { has: userId } },
+        orderBy: { lastMessageAt: 'desc' },
+        include: {
+          messages: {
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+          },
+          deal: {
+            select: {
+              id: true,
+              property: { select: { id: true, title: true } },
+              institution: { select: { id: true, institutionName: true } },
+            },
           },
         },
-      },
-    });
+      }),
+    );
 
     const otherIds = new Set<string>();
     for (const t of threads) {
-      for (const p of t.participants) {
+      for (const p of this.safeParticipants(t.participants)) {
         if (p !== userId && p !== SYSTEM_SENDER) otherIds.add(p);
       }
     }
@@ -454,7 +528,9 @@ export class ChatService {
         },
       });
 
-      const others = t.participants.filter((p) => p !== userId && p !== SYSTEM_SENDER);
+      const others = this.safeParticipants(t.participants).filter(
+        (p) => p !== userId && p !== SYSTEM_SENDER,
+      );
       const displayTitle =
         t.title ??
         (others.length === 1

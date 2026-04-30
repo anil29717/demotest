@@ -7,6 +7,7 @@ import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import { apiFetch } from "@/lib/api";
+import { pickPrimaryImageUrl } from "@/lib/property-images";
 import { formatINR } from "@/lib/format";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageSkeleton } from "@/components/ui/skeleton";
@@ -26,8 +27,23 @@ type Prop = {
   status?: string;
   trustScore?: number;
   matches?: { id: string }[];
+  images?: string[];
   imageUrls?: string[];
+  imageUrl?: string | null;
 };
+
+function resolvePropertyImageUrl(property: {
+  images?: string[];
+  imageUrls?: string[];
+  imageUrl?: string | null;
+}) {
+  const combined = [
+    ...(property.imageUrls ?? []),
+    ...(property.images ?? []),
+    ...(property.imageUrl ? [property.imageUrl] : []),
+  ];
+  return pickPrimaryImageUrl(combined);
+}
 
 export default function PropertiesPage() {
   const { token, user } = useAuth();
@@ -192,22 +208,25 @@ export default function PropertiesPage() {
           />
         ) : (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {filtered.map((p) => (
+            {filtered.map((p) => {
+              const imageUrl = resolvePropertyImageUrl(p);
+              return (
               <div
                 key={p.id}
                 className="overflow-hidden rounded-xl border border-[#1f1f1f] bg-[#111111] transition hover:border-[#00C49A33]"
               >
                 <Link href={`/properties/${p.id}`} className="block">
                   <div className="relative">
-                    {p.imageUrls?.[0] ? (
+                    {imageUrl ? (
                       <div className="relative h-52 w-full">
-                        <Image
-                          src={p.imageUrls[0]}
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={imageUrl}
                           alt={p.title}
-                          fill
-                          className="object-cover"
+                          className="h-full w-full object-cover"
                           loading="lazy"
                           onError={(e) => {
+                            e.currentTarget.onerror = null;
                             e.currentTarget.src = "/placeholder-property.png";
                           }}
                         />
@@ -259,7 +278,7 @@ export default function PropertiesPage() {
                   </div>
                 ) : null}
               </div>
-            ))}
+            )})}
           </div>
         )}
       </div>
@@ -349,27 +368,30 @@ export default function PropertiesPage() {
         />
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {filtered.map((p) => (
+          {filtered.map((p) => {
+            const imageUrl = resolvePropertyImageUrl(p);
+            return (
             <Link
               key={p.id}
               href={`/properties/${p.id}`}
               className="overflow-hidden rounded-xl border border-[#1f1f1f] bg-[#111111] transition hover:-translate-y-0.5 hover:border-[#00C49A33]"
             >
               <div className="relative">
-                {p.imageUrls?.[0] ? (
-                <div className="relative h-52 w-full">
-                  <Image
-                    src={p.imageUrls[0]}
-                    alt={p.title}
-                    fill
-                    className="object-cover"
-                    loading="lazy"
-                    onError={(e) => {
-                      e.currentTarget.src = "/placeholder-property.png";
-                    }}
-                  />
-                </div>
-              ) : (
+                {imageUrl ? (
+                  <div className="relative h-52 w-full">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={imageUrl}
+                      alt={p.title}
+                      className="h-full w-full object-cover"
+                      loading="lazy"
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src = "/placeholder-property.png";
+                      }}
+                    />
+                  </div>
+                ) : (
                   <div className="relative h-52 w-full">
                     <Image src="/placeholder-property.png" alt={p.title} fill className="object-cover" />
                   </div>
@@ -405,7 +427,7 @@ export default function PropertiesPage() {
                 </div>
               </div>
             </Link>
-          ))}
+          )})}
         </div>
       )}
     </div>

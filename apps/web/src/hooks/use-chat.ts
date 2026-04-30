@@ -19,6 +19,27 @@ export type ChatMessageRow = {
   placeholder?: string;
 };
 
+function isValidMessageRow(value: unknown): value is ChatMessageRow {
+  if (!value || typeof value !== "object") return false;
+  const row = value as Partial<ChatMessageRow>;
+  return (
+    typeof row.id === "string" &&
+    typeof row.threadId === "string" &&
+    typeof row.senderId === "string" &&
+    typeof row.createdAt === "string" &&
+    typeof row.messageType === "string" &&
+    Array.isArray(row.readBy)
+  );
+}
+
+function byCreatedAtAsc(a: ChatMessageRow, b: ChatMessageRow) {
+  const at = new Date(a.createdAt).getTime();
+  const bt = new Date(b.createdAt).getTime();
+  const safeA = Number.isFinite(at) ? at : 0;
+  const safeB = Number.isFinite(bt) ? bt : 0;
+  return safeA - safeB;
+}
+
 function socketUrl(): string {
   const base = apiUrl("").replace(/\/$/, "");
   return `${base}/chat`;
@@ -62,15 +83,20 @@ export function useChat(threadId: string | null, token: string | null) {
       setConnected(false);
     });
 
-    socket.on("newMessage", (msg: ChatMessageRow) => {
+    socket.on("newMessage", (msg: unknown) => {
+      if (!isValidMessageRow(msg)) return;
       setMessages((prev) => {
-        const filtered = prev.filter((m) => !m.id.startsWith("temp-") || m.id === msg.id);
-        if (filtered.some((m) => m.id === msg.id)) {
-          return filtered.map((m) => (m.id === msg.id ? { ...m, ...msg } : m));
+        const msgId = typeof msg?.id === "string" ? msg.id : null;
+        const filtered = prev.filter((m) => {
+          if (!isValidMessageRow(m)) return false;
+          const id = typeof m?.id === "string" ? m.id : "";
+          const isTemp = id.startsWith("temp-");
+          return !isTemp || (msgId !== null && id === msgId);
+        });
+        if (msgId && filtered.some((m) => m.id === msgId)) {
+          return filtered.map((m) => (m.id === msgId ? { ...m, ...msg } : m));
         }
-        return [...filtered, msg].sort(
-          (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
-        );
+        return [...filtered, msg].sort(byCreatedAtAsc);
       });
     });
 
@@ -84,7 +110,8 @@ export function useChat(threadId: string | null, token: string | null) {
       }
     });
 
-    socket.on("readReceipt", (p: { threadId: string; userId: string }) => {
+    socket.on("readReceipt", (p: { threadId?: string | null; userId?: string | null } | null) => {
+      if (!p || typeof p.threadId !== "string" || typeof p.userId !== "string") return;
       if (p.threadId !== threadId) return;
       setMessages((prev) =>
         prev.map((m) =>

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Award,
@@ -10,10 +10,12 @@ import {
   Bell,
   Briefcase,
   Building2,
+  ChevronDown,
   ClipboardList,
   CreditCard,
   Download,
   Gavel,
+  Globe,
   Handshake,
   Landmark,
   LayoutDashboard,
@@ -24,16 +26,16 @@ import {
   Scale,
   Search,
   ShieldCheck,
+  Settings,
   Target,
   TrendingUp,
   Users,
   User,
-  Settings,
   ChevronUp,
   X,
   Zap,
-  Globe,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { NavIcon } from "@/components/nav-icon";
 import { apiFetch } from "@/lib/api";
@@ -53,12 +55,20 @@ import { getInitials } from "@/lib/format";
 import { flagAndCountry, httpStatusFromError } from "@/lib/nri-ui";
 
 const WORKSPACE_SIDEBAR_ROLES = new Set([
+  "ADMIN",
   "BROKER",
   "SELLER",
   "NRI",
   "BUYER",
   "HNI",
   "BUILDER",
+  "INSTITUTIONAL_BUYER",
+  "INSTITUTIONAL_SELLER",
+]);
+const ORG_CONTEXT_ROLES = new Set([
+  "ADMIN",
+  "BROKER",
+  "SELLER",
   "INSTITUTIONAL_BUYER",
   "INSTITUTIONAL_SELLER",
 ]);
@@ -96,6 +106,119 @@ const EMPTY_COUNTS: SidebarCounts = {
   institutions: 0,
   chatUnread: 0,
 };
+
+type AdminSidebarItem = {
+  label: string;
+  href: string;
+  icon: LucideIcon;
+  badgeKey?: keyof SidebarCounts | "fraudQueue" | "pendingReviews";
+  badgeColor?: string;
+};
+
+type AdminSidebarCategory = {
+  label: string;
+  icon: LucideIcon;
+  defaultOpen: boolean;
+  items: AdminSidebarItem[];
+};
+
+const ADMIN_CATEGORY_STORAGE_KEY = "admin-sidebar-categories";
+const ADMIN_CATEGORIES: AdminSidebarCategory[] = [
+  {
+    label: "Overview",
+    icon: LayoutDashboard,
+    defaultOpen: true,
+    items: [
+      { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+      { label: "Analytics", href: "/analytics", icon: BarChart3 },
+    ],
+  },
+  {
+    label: "Listings",
+    icon: Building2,
+    defaultOpen: false,
+    items: [
+      { label: "All properties", href: "/properties", icon: Building2, badgeKey: "properties" },
+      { label: "All requirements", href: "/requirements", icon: ClipboardList, badgeKey: "requirements" },
+      { label: "Search", href: "/search", icon: Search },
+      { label: "Auctions", href: "/auctions", icon: Gavel, badgeKey: "auctions" },
+    ],
+  },
+  {
+    label: "Pipeline",
+    icon: Users,
+    defaultOpen: false,
+    items: [
+      { label: "All leads", href: "/crm", icon: Users, badgeKey: "hotLeads" },
+      { label: "All deals", href: "/deals", icon: Briefcase, badgeKey: "deals" },
+      { label: "Compliance", href: "/compliance", icon: ShieldCheck, badgeKey: "compliance" },
+    ],
+  },
+  {
+    label: "Institutions",
+    icon: Landmark,
+    defaultOpen: false,
+    items: [
+      { label: "Listings", href: "/institutions", icon: Landmark, badgeKey: "institutions" },
+      { label: "NDA management", href: "/admin/nda", icon: ShieldCheck },
+      { label: "Data rooms", href: "/institutions?tab=dataroom", icon: Download },
+    ],
+  },
+  {
+    label: "Platform admin",
+    icon: ShieldCheck,
+    defaultOpen: true,
+    items: [
+      { label: "Fraud queue", href: "/admin/fraud", icon: ShieldCheck },
+      { label: "Audit logs", href: "/admin/audit", icon: Award },
+      { label: "Reviews", href: "/admin/reviews", icon: Award },
+      { label: "WhatsApp", href: "/admin/whatsapp", icon: Bell },
+      { label: "Escrow", href: "/admin/escrow", icon: CreditCard },
+      { label: "Crawler", href: "/admin/crawler", icon: Zap },
+      { label: "API usage", href: "/admin/api-usage", icon: BarChart3 },
+    ],
+  },
+  {
+    label: "Users",
+    icon: Users,
+    defaultOpen: false,
+    items: [
+      { label: "All users", href: "/admin/users", icon: Users },
+      { label: "Organizations", href: "/admin/organizations", icon: Building2 },
+      { label: "Co-Broker (Manual)", href: "/broker-network", icon: Network },
+      { label: "Partners", href: "/partners", icon: Handshake },
+    ],
+  },
+  {
+    label: "Verticals",
+    icon: Globe,
+    defaultOpen: false,
+    items: [
+      { label: "NRI workspace", href: "/verticals/nri", icon: Globe },
+      { label: "HNI workspace", href: "/verticals/hni", icon: TrendingUp },
+      { label: "IRM", href: "/irm", icon: Target },
+      { label: "Builder portal", href: "/builder/projects", icon: Building2 },
+    ],
+  },
+  {
+    label: "Account",
+    icon: Settings,
+    defaultOpen: false,
+    items: [
+      { label: "Billing", href: "/billing", icon: CreditCard },
+      { label: "Export data", href: "/export", icon: Download },
+      { label: "Profile", href: "/profile", icon: User },
+      { label: "API access", href: "/api-product", icon: Zap },
+    ],
+  },
+];
+
+function pathMatches(pathname: string, href: string) {
+  if (!href || href === "/") return pathname === "/";
+  const [base] = href.split("?");
+  const target = base || href;
+  return pathname === target || pathname.startsWith(`${target}/`) || pathname.startsWith(`${target}?`);
+}
 
 const SIDEBAR_COUNTS_STALE_MS = 1000 * 60 * 3;
 const sidebarCountsCache = new Map<string, { counts: SidebarCounts; ts: number }>();
@@ -165,7 +288,6 @@ function useSidebarCounts(token: string | null, role?: string | null): SidebarCo
         });
         if (cancelled) return;
         patch.hotLeads = Number(nonCritical?.hotLeads ?? 0);
-
         if (role === "BROKER" || role === "SELLER" || role === "ADMIN" || role === "BUYER") {
           const threads = await apiFetch<{ unreadCount?: number }[]>("/chat/threads", { token }).catch(() => []);
           patch.chatUnread = Array.isArray(threads)
@@ -189,7 +311,7 @@ function useSidebarCounts(token: string | null, role?: string | null): SidebarCo
           patch.auctions = Array.isArray(auctions) ? auctions.length : 0;
         }
         if (role === "INSTITUTIONAL_BUYER" || role === "INSTITUTIONAL_SELLER") {
-          const instRows = await apiFetch<unknown[]>("/institutions", { token }).catch(() => []);
+          const instRows = await apiFetch<unknown[]>("/institutions/me", { token }).catch(() => []);
           patch.institutions = Array.isArray(instRows) ? instRows.length : 0;
         }
         if (!cancelled) {
@@ -225,11 +347,97 @@ function useSidebarCounts(token: string | null, role?: string | null): SidebarCo
   return counts;
 }
 
+function SidebarCategory({
+  category,
+  pathname,
+  isCollapsed,
+  isOpen,
+  hasActiveChild,
+  onToggle,
+  counts,
+  defaultBadgeClass,
+}: {
+  category: AdminSidebarCategory;
+  pathname: string;
+  isCollapsed: boolean;
+  isOpen: boolean;
+  hasActiveChild: boolean;
+  onToggle: () => void;
+  counts: SidebarCounts;
+  defaultBadgeClass: string;
+}) {
+  const CategoryIcon = category.icon;
+  const activeHeader = hasActiveChild;
+  const headerClass = activeHeader
+    ? "border-l-2 border-l-[#00C49A] text-[#cccccc]"
+    : "border-l-2 border-l-transparent text-[#888888]";
+  return (
+    <div className="mx-2 mt-1">
+      <button
+        type="button"
+        onClick={onToggle}
+        title={category.label}
+        className={`flex h-[34px] w-full items-center gap-2 rounded-[6px] px-3 transition hover:bg-[#ffffff06] ${headerClass}`}
+      >
+        <CategoryIcon className="h-[18px] w-[18px] shrink-0" />
+        {!isCollapsed ? (
+          <>
+            <span className="text-[13px]">{category.label}</span>
+            <ChevronDown
+              className={`ml-auto h-3 w-3 text-[#555] transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}
+            />
+          </>
+        ) : null}
+      </button>
+      {!isCollapsed ? (
+        <div
+          className="overflow-hidden transition-[max-height,opacity] duration-200 ease-out"
+          style={{ maxHeight: isOpen ? 600 : 0, opacity: isOpen ? 1 : 0 }}
+        >
+          <ul className="space-y-0.5 pt-1">
+            {category.items.map((item) => {
+              const active = pathMatches(pathname, item.href);
+              const badge =
+                item.badgeKey && item.badgeKey in counts
+                  ? Number(counts[item.badgeKey as keyof SidebarCounts] ?? 0)
+                  : 0;
+              return (
+                <li key={item.href}>
+                  <Link
+                    href={item.href}
+                    prefetch={true}
+                    className={`flex h-[34px] items-center border-l-2 pl-7 pr-3 text-[12px] transition ${
+                      active
+                        ? "border-l-[#00C49A] bg-[#ffffff0a] text-white"
+                        : "border-l-transparent text-[#666666] hover:bg-[#ffffff08] hover:text-[#cccccc]"
+                    }`}
+                  >
+                    <span>{item.label}</span>
+                    {badge > 0 ? (
+                      <span
+                        className={`ml-auto inline-flex h-4 min-w-[18px] items-center justify-center rounded-[20px] px-[5px] text-[10px] font-semibold ${
+                          item.badgeColor || defaultBadgeClass
+                        }`}
+                      >
+                        {badge}
+                      </span>
+                    ) : null}
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { user, logout, token } = useAuth();
-  const nav = useMemo(() => itemsForRole(user?.role), [user?.role]);
+  const { user, logout, token, sessionRole } = useAuth();
+  const nav = useMemo(() => itemsForRole(sessionRole), [sessionRole]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [onboardingComplete, setOnboardingComplete] = useState(true);
@@ -239,7 +447,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [nriCountry, setNriCountry] = useState<string | null>(null);
   const [hniTicketMin, setHniTicketMin] = useState<number | null>(null);
   const [hniTicketMax, setHniTicketMax] = useState<number | null>(null);
-  const counts = useSidebarCounts(token, user?.role);
+  const [adminCollapsed, setAdminCollapsed] = useState(false);
+  const [adminCategoryOpen, setAdminCategoryOpen] = useState<Record<string, boolean>>({});
+  const [adminPopoutCategory, setAdminPopoutCategory] = useState<string | null>(null);
+  const counts = useSidebarCounts(token, sessionRole);
   const profileMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -255,6 +466,28 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       document.removeEventListener("mousedown", onMouseDown);
     };
   }, [profileMenuOpen]);
+
+  useEffect(() => {
+    if (sessionRole !== "ADMIN") return;
+    let initial = Object.fromEntries(ADMIN_CATEGORIES.map((c) => [c.label, c.defaultOpen])) as Record<string, boolean>;
+    if (typeof window !== "undefined") {
+      try {
+        const raw = localStorage.getItem(ADMIN_CATEGORY_STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw) as Record<string, boolean>;
+          initial = { ...initial, ...parsed };
+        }
+      } catch {
+        // ignore storage parse errors
+      }
+    }
+    for (const cat of ADMIN_CATEGORIES) {
+      if (cat.items.some((item) => pathMatches(pathname, item.href))) {
+        initial[cat.label] = true;
+      }
+    }
+    setAdminCategoryOpen(initial);
+  }, [sessionRole, pathname]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -279,45 +512,51 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     document.title = `AR Buildwel · ${page}`;
   }, [pathname]);
 
-  useEffect(() => {
-    if (!token || !user?.role || !WORKSPACE_SIDEBAR_ROLES.has(user.role)) return;
-    let cancelled = false;
-    void Promise.all([
+  const reloadWorkspaceOrgsAndProfile = useCallback(async () => {
+    if (!token || !sessionRole || !WORKSPACE_SIDEBAR_ROLES.has(sessionRole)) return;
+    const [profile, orgs] = await Promise.all([
       apiFetch<{ onboardingComplete?: boolean; onboardingStep?: string | null }>("/user/profile", { token }).catch(
         () => ({}),
       ),
-      apiFetch<OrgMembership[]>("/organizations/mine", { token }).catch(() => []),
-    ]).then(([profile, orgs]) => {
-      if (cancelled) return;
-      const p = profile as { onboardingComplete?: boolean; onboardingStep?: string | null };
-      const isCompleteFromStep = String(p.onboardingStep ?? "").toLowerCase() === "complete";
-      const isComplete = typeof p.onboardingComplete === "boolean" ? p.onboardingComplete : isCompleteFromStep;
-      setOnboardingComplete(isComplete);
-      const r = user?.role;
-      const fallback =
-        r === "SELLER"
-          ? "Individual seller"
-          : r === "NRI"
-            ? "NRI account"
-            : r === "BUYER"
-              ? "Buyer"
-              : r === "HNI"
-                ? "HNI account"
-                : r === "INSTITUTIONAL_BUYER" || r === "INSTITUTIONAL_SELLER"
-                  ? "Organization"
-                  : "Independent broker";
-      const resolvedOrgs = orgs ?? [];
-      setOrgMemberships(resolvedOrgs);
-      const active = resolvedOrgs.find((m) => m.isActive) ?? resolvedOrgs[0];
-      const activeName = active?.name?.trim() || fallback;
-      const activeId = active ? active.organizationId || active.id : null;
-      setOrganizationName(activeName);
-      setOrganizationId(activeId);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [token, user?.role]);
+      ORG_CONTEXT_ROLES.has(sessionRole)
+        ? apiFetch<OrgMembership[]>("/organizations/mine", { token }).catch(() => [])
+        : Promise.resolve([] as OrgMembership[]),
+    ]);
+    const p = profile as { onboardingComplete?: boolean; onboardingStep?: string | null };
+    const isCompleteFromStep = String(p.onboardingStep ?? "").toLowerCase() === "complete";
+    const isComplete = typeof p.onboardingComplete === "boolean" ? p.onboardingComplete : isCompleteFromStep;
+    setOnboardingComplete(isComplete);
+    const r = sessionRole;
+    const fallback =
+      r === "SELLER"
+        ? "Individual seller"
+        : r === "NRI"
+          ? "NRI account"
+          : r === "BUYER"
+            ? "Buyer"
+            : r === "HNI"
+              ? "HNI account"
+              : r === "INSTITUTIONAL_BUYER" || r === "INSTITUTIONAL_SELLER"
+                ? "Organization"
+                : "Independent broker";
+    const resolvedOrgs = orgs ?? [];
+    setOrgMemberships(resolvedOrgs);
+    const active = resolvedOrgs.find((m) => m.isActive) ?? resolvedOrgs[0];
+    const activeName = active?.name?.trim() || fallback;
+    const activeId = active ? active.organizationId || active.id : null;
+    setOrganizationName(activeName);
+    setOrganizationId(activeId);
+  }, [token, sessionRole]);
+
+  useEffect(() => {
+    void reloadWorkspaceOrgsAndProfile();
+  }, [reloadWorkspaceOrgsAndProfile]);
+
+  useEffect(() => {
+    const handler = () => void reloadWorkspaceOrgsAndProfile();
+    window.addEventListener("ar-buildwel-orgs-changed", handler);
+    return () => window.removeEventListener("ar-buildwel-orgs-changed", handler);
+  }, [reloadWorkspaceOrgsAndProfile]);
 
   async function switchOrganization(nextOrgId: string) {
     if (!token || !nextOrgId) return;
@@ -340,7 +579,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   useEffect(() => {
-    if (!token || user?.role !== "HNI") return;
+    if (!token || sessionRole !== "HNI") return;
     let cancelled = false;
     void apiFetch<{ ticketMinCr?: number | null; ticketMaxCr?: number | null }>("/verticals/hni/profile", { token })
       .then((prof) => {
@@ -359,10 +598,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [token, user?.role]);
+  }, [token, sessionRole]);
 
   useEffect(() => {
-    if (!token || user?.role !== "NRI") return;
+    if (!token || sessionRole !== "NRI") return;
     let cancelled = false;
     void apiFetch<{ country?: string | null }>("/verticals/nri/profile", { token })
       .then((p) => {
@@ -375,7 +614,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [token, user?.role]);
+  }, [token, sessionRole]);
 
   const roleIconMap = {
     "/dashboard": LayoutDashboard,
@@ -424,12 +663,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return "bg-[#00C49A] text-black";
   }
 
+  function toggleAdminCategory(label: string) {
+    setAdminCategoryOpen((prev) => {
+      const next = { ...prev, [label]: !prev[label] };
+      if (typeof window !== "undefined") {
+        localStorage.setItem(ADMIN_CATEGORY_STORAGE_KEY, JSON.stringify(next));
+      }
+      return next;
+    });
+  }
+
   function signOut() {
     logout();
     router.replace("/login");
   }
 
-  const wr = user?.role;
+  const wr = sessionRole;
   if (wr && WORKSPACE_SIDEBAR_ROLES.has(wr)) {
     const isSeller = wr === "SELLER";
     const isNri = wr === "NRI";
@@ -439,8 +688,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     const isInstBuyer = wr === "INSTITUTIONAL_BUYER";
     const isInstSeller = wr === "INSTITUTIONAL_SELLER";
     const isBroker = wr === "BROKER";
+    const isAdmin = wr === "ADMIN";
 
-    const sections = isNri
+    const sections = isAdmin
+      ? BROKER_SIDEBAR_SECTIONS
+      : isNri
       ? NRI_SIDEBAR_SECTIONS
       : isSeller
         ? SELLER_SIDEBAR_SECTIONS
@@ -456,7 +708,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 ? INSTITUTIONAL_SELLER_SIDEBAR_SECTIONS
                 : BROKER_SIDEBAR_SECTIONS;
 
-    const rolePill = isSeller
+    const rolePill = isAdmin
+      ? {
+          wrap: "border border-[#00C49A25] bg-[#00C49A0F]",
+          text: "text-[#00C49A]",
+          dot: "bg-[#00C49A]",
+          label: "ADMIN",
+        }
+      : isSeller
       ? {
           wrap: "border border-[#EF9F2730] bg-[#EF9F2710]",
           text: "text-[#EF9F27]",
@@ -535,6 +794,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
     const footerSecondary = isNri
       ? `NRI · ${nriCountry?.trim() ? flagAndCountry(nriCountry) : "Country not set"}`
+      : isAdmin
+        ? "Admin"
       : isSeller
         ? "Seller"
         : isBuyer
@@ -551,15 +812,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
     const displayName =
       user?.name?.trim() ||
-      (isSeller ? "Seller User" : isNri ? "NRI User" : isBuyer ? "Buyer User" : isHni ? "HNI User" : isBuilder ? "Builder User" : isInstBuyer ? "Inst. Buyer" : isInstSeller ? "Inst. Seller" : "Broker User");
+      (isAdmin ? "Admin User" : isSeller ? "Seller User" : isNri ? "NRI User" : isBuyer ? "Buyer User" : isHni ? "HNI User" : isBuilder ? "Builder User" : isInstBuyer ? "Inst. Buyer" : isInstSeller ? "Inst. Seller" : "Broker User");
 
     const initialsSeed =
       user?.name?.trim() ||
-      (isSeller ? "Seller" : isNri ? "NRI" : isBuyer ? "Buyer" : isHni ? "HNI" : isBuilder ? "Builder" : isInstBuyer ? "Inst Buyer" : isInstSeller ? "Inst Seller" : "Broker");
+      (isAdmin ? "Admin" : isSeller ? "Seller" : isNri ? "NRI" : isBuyer ? "Buyer" : isHni ? "HNI" : isBuilder ? "Builder" : isInstBuyer ? "Inst Buyer" : isInstSeller ? "Inst Seller" : "Broker");
 
     return (
-      <div className="flex h-screen overflow-hidden bg-[#0a0a0a] text-zinc-100">
-        <aside className="hidden h-screen w-[240px] min-w-[240px] flex-col overflow-hidden border-r border-[#1a1a1a] bg-[#0a0a0a] md:flex">
+      <div className="flex h-screen min-h-0 w-full overflow-hidden bg-[#0a0a0a] text-zinc-100">
+        <aside
+          className={`hidden h-screen shrink-0 flex-col overflow-hidden border-r border-[#1a1a1a] bg-[#0a0a0a] transition-[width,min-width] duration-200 md:flex ${
+            isAdmin && adminCollapsed ? "w-16 min-w-16" : "w-[240px] min-w-[240px]"
+          }`}
+        >
           <div className="h-14 shrink-0 border-b border-[#1a1a1a] px-3">
             <Link href="/dashboard" prefetch={true} className="flex h-full items-center gap-2">
               <div className="flex h-7 w-7 items-center justify-center rounded-md bg-[#00C49A] text-[11px] font-bold text-black">
@@ -576,10 +841,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <div className={`mx-3 my-[10px] rounded-lg px-[10px] py-2 ${rolePill.wrap}`}>
               <p className={`flex items-center gap-1.5 text-[11px] font-medium ${rolePill.text}`}>
                 <span className={`h-1.5 w-1.5 rounded-full ${rolePill.dot}`} />
-                {rolePill.label}
+                {!isAdmin || !adminCollapsed ? rolePill.label : null}
               </p>
-              {isBuyer ? <p className="mt-1 truncate text-[10px] text-[#444444]">Looking for property</p> : null}
-              {isHni ? (
+              {!isAdmin || !adminCollapsed ? isBuyer ? <p className="mt-1 truncate text-[10px] text-[#444444]">Looking for property</p> : null : null}
+              {!isAdmin || !adminCollapsed ? isHni ? (
                 hniRangeOk ? (
                   <p className="mt-1 truncate text-[10px] text-[#444444]">
                     ₹{hniTicketMin}Cr – ₹{hniTicketMax}Cr
@@ -589,18 +854,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     Set investment range →
                   </Link>
                 )
-              ) : null}
-              {isInstBuyer ? (
+              ) : null : null}
+              {!isAdmin || !adminCollapsed ? isInstBuyer ? (
                 <p className="mt-1 truncate text-[10px] text-[#444444]">Institutional acquisitions</p>
-              ) : null}
-              {isInstSeller ? <p className="mt-1 truncate text-[10px] text-[#444444]">{organizationName}</p> : null}
-              {(isBroker || isSeller || isNri) ? (
-                <p className="mt-1 truncate text-[10px] text-[#444444]">{organizationName}</p>
-              ) : null}
-              {organizationId ? (
-                <p className="mt-1 truncate text-[10px] text-[#3f3f3f]">Org ID: {organizationId}</p>
-              ) : null}
-              {orgMemberships.length > 1 ? (
+              ) : null : null}
+              {(!isAdmin || !adminCollapsed) && orgMemberships.length > 1 ? (
                 <select
                   className="mt-2 w-full rounded border border-[#2a2a2a] bg-[#0b0b0b] px-2 py-1 text-[10px] text-[#a3a3a3]"
                   value={organizationId ?? ""}
@@ -629,66 +887,138 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </div>
             ) : null}
 
-            {sections.map((section) => (
-              <div key={section.category}>
-                <p className="px-4 pb-[3px] pt-[10px] text-[9px] uppercase tracking-[0.08em] text-[#383838]">
-                  {section.category}
-                </p>
-                <ul className="space-y-0.5">
-                  {section.items.map((item) => {
-                    const Icon = roleIconMap[item.href as keyof typeof roleIconMap];
-                    const active = isActive(item);
-                    const badge = badgeFor(item);
-                    const badgeCls =
-                      (isNri || isBuyer) && item.badgeKey === "matches"
-                        ? "bg-[#00C49A] text-black"
-                        : badgeClass(item, wr);
-                    if (item.subItem) {
+            {isAdmin ? (
+              <div className="relative">
+                <div className="mx-2 mb-2 mt-1 flex justify-end">
+                  <button
+                    type="button"
+                    title={adminCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+                    onClick={() => {
+                      setAdminCollapsed((prev) => !prev);
+                      setAdminPopoutCategory(null);
+                    }}
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-md text-[#777] transition hover:bg-[#ffffff09] hover:text-[#ccc]"
+                  >
+                    <Menu className="h-4 w-4" />
+                  </button>
+                </div>
+                {ADMIN_CATEGORIES.map((category) => {
+                  const hasActiveChild = category.items.some((item) => pathMatches(pathname, item.href));
+                  const isOpen = hasActiveChild || Boolean(adminCategoryOpen[category.label]);
+                  return (
+                    <div key={category.label} className="relative">
+                      <SidebarCategory
+                        category={category}
+                        pathname={pathname}
+                        isCollapsed={adminCollapsed}
+                        isOpen={isOpen}
+                        hasActiveChild={hasActiveChild}
+                        onToggle={() => {
+                          if (adminCollapsed) {
+                            setAdminPopoutCategory((prev) => (prev === category.label ? null : category.label));
+                            return;
+                          }
+                          toggleAdminCategory(category.label);
+                        }}
+                        counts={counts}
+                        defaultBadgeClass="bg-[#00C49A] text-black"
+                      />
+                      {adminCollapsed && adminPopoutCategory === category.label ? (
+                        <div className="absolute left-[64px] top-0 z-[100] min-w-[220px] rounded-lg border border-[#2a2a2a] bg-[#1a1a1a] py-1 shadow-xl">
+                          {category.items.map((item) => {
+                            const active = pathMatches(pathname, item.href);
+                            const badge = item.badgeKey ? Number(counts[item.badgeKey] ?? 0) : 0;
+                            return (
+                              <Link
+                                key={item.href}
+                                href={item.href}
+                                prefetch={true}
+                                onClick={() => setAdminPopoutCategory(null)}
+                                className={`mx-1 flex h-[34px] items-center rounded-md px-3 text-[12px] transition ${
+                                  active ? "bg-[#ffffff0a] text-white" : "text-[#999] hover:bg-[#ffffff08] hover:text-[#ccc]"
+                                }`}
+                              >
+                                <span>{item.label}</span>
+                                {badge > 0 ? (
+                                  <span
+                                    className={`ml-auto inline-flex h-4 min-w-[18px] items-center justify-center rounded-[20px] px-[5px] text-[10px] font-semibold ${
+                                      item.badgeColor || "bg-[#00C49A] text-black"
+                                    }`}
+                                  >
+                                    {badge}
+                                  </span>
+                                ) : null}
+                              </Link>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              sections.map((section) => (
+                <div key={section.category}>
+                  <p className="px-4 pb-[3px] pt-[10px] text-[9px] uppercase tracking-[0.08em] text-[#383838]">
+                    {section.category}
+                  </p>
+                  <ul className="space-y-0.5">
+                    {section.items.map((item) => {
+                      const Icon = roleIconMap[item.href as keyof typeof roleIconMap];
+                      const active = isActive(item);
+                      const badge = badgeFor(item);
+                      const badgeCls =
+                        (isNri || isBuyer) && item.badgeKey === "matches"
+                          ? "bg-[#00C49A] text-black"
+                          : badgeClass(item, wr);
+                      if (item.subItem) {
+                        return (
+                          <li key={item.href} className="mx-2">
+                            <Link
+                              href={item.href}
+                              prefetch={true}
+                              className={`flex h-7 items-center rounded-[6px] pl-8 pr-3 text-[11px] transition-all duration-150 ${
+                                active
+                                  ? "bg-[#00C49A12] text-[#00C49A]"
+                                  : "text-[#444444] hover:bg-[#ffffff09] hover:text-[#888888]"
+                              }`}
+                            >
+                              {item.label}
+                            </Link>
+                          </li>
+                        );
+                      }
                       return (
                         <li key={item.href} className="mx-2">
                           <Link
                             href={item.href}
                             prefetch={true}
-                            className={`flex h-7 items-center rounded-[6px] pl-8 pr-3 text-[11px] transition-all duration-150 ${
+                            className={`flex h-[34px] items-center gap-2 rounded-[6px] border-l-2 px-3 transition-all duration-150 ${
                               active
-                                ? "bg-[#00C49A12] text-[#00C49A]"
-                                : "text-[#444444] hover:bg-[#ffffff09] hover:text-[#888888]"
+                                ? "border-l-[#00C49A] bg-[#00C49A12] text-[#00C49A]"
+                                : "border-l-transparent text-[#666666] hover:bg-[#ffffff09] hover:text-[#888888]"
                             }`}
                           >
-                            {item.label}
+                            {Icon ? (
+                              <Icon className={`h-4 w-4 ${active ? "text-[#00C49A]" : "text-[#3d3d3d]"}`} />
+                            ) : null}
+                            <span className="text-[12px]">{item.label}</span>
+                            {badge > 0 ? (
+                              <span
+                                className={`ml-auto min-w-[18px] rounded-[10px] px-1.5 py-[1px] text-center text-[9px] font-semibold ${badgeCls}`}
+                              >
+                                {badge}
+                              </span>
+                            ) : null}
                           </Link>
                         </li>
                       );
-                    }
-                    return (
-                      <li key={item.href} className="mx-2">
-                        <Link
-                          href={item.href}
-                          prefetch={true}
-                          className={`flex h-[34px] items-center gap-2 rounded-[6px] border-l-2 px-3 transition-all duration-150 ${
-                            active
-                              ? "border-l-[#00C49A] bg-[#00C49A12] text-[#00C49A]"
-                              : "border-l-transparent text-[#666666] hover:bg-[#ffffff09] hover:text-[#888888]"
-                          }`}
-                        >
-                          {Icon ? (
-                            <Icon className={`h-4 w-4 ${active ? "text-[#00C49A]" : "text-[#3d3d3d]"}`} />
-                          ) : null}
-                          <span className="text-[12px]">{item.label}</span>
-                          {badge > 0 ? (
-                            <span
-                              className={`ml-auto min-w-[18px] rounded-[10px] px-1.5 py-[1px] text-center text-[9px] font-semibold ${badgeCls}`}
-                            >
-                              {badge}
-                            </span>
-                          ) : null}
-                        </Link>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-            ))}
+                    })}
+                  </ul>
+                </div>
+              ))
+            )}
           </div>
 
           <div className="relative shrink-0 border-t border-[#1a1a1a] p-3" ref={profileMenuRef}>
@@ -702,6 +1032,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   className="absolute left-3 z-50 w-[220px] rounded-[10px] border border-[#2a2a2a] bg-[#1a1a1a] p-1.5 shadow-[0_-4px_24px_rgba(0,0,0,0.5)]"
                   style={{ bottom: 72 }}
                 >
+                  {(wr === "BROKER" || wr === "INSTITUTIONAL_BUYER" || wr === "INSTITUTIONAL_SELLER") &&
+                  !organizationId ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setProfileMenuOpen(false);
+                          router.push("/organizations/setup");
+                        }}
+                        className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[13px] text-[#00C49A] transition hover:bg-[#00C49A14]"
+                      >
+                        <Building2 className="h-[14px] w-[14px]" />
+                        Create organization
+                      </button>
+                      <div className="my-1 h-px bg-[#2a2a2a]" />
+                    </>
+                  ) : null}
                   <button
                     type="button"
                     onClick={() => {
@@ -724,6 +1071,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   >
                     <Settings className="h-[14px] w-[14px] text-[#888]" />
                     Account settings
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setProfileMenuOpen(false);
+                      router.push("/profile?tab=organization");
+                    }}
+                    className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[13px] text-[#ccc] transition hover:bg-[#2a2a2a]"
+                  >
+                    <Building2 className="h-[14px] w-[14px] text-[#888]" />
+                    Organization
                   </button>
                   <button
                     type="button"
@@ -754,23 +1112,38 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <button
               type="button"
               onClick={() => setProfileMenuOpen((prev) => !prev)}
-              className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2.5 text-left transition hover:bg-[#ffffff08]"
+              className={`flex w-full cursor-pointer items-center rounded-lg px-3 py-2.5 text-left transition hover:bg-[#ffffff08] ${
+                isAdmin && adminCollapsed ? "justify-center" : "gap-2.5"
+              }`}
             >
               <div
                 className={`flex h-8 w-8 items-center justify-center rounded-full bg-[#1a1a1a] text-[12px] font-semibold ${avatarTone}`}
               >
                 {getInitials(initialsSeed)}
               </div>
-              <div className="min-w-0 flex-1">
+              {isAdmin && adminCollapsed ? null : <div className="min-w-0 flex-1">
                 <p className="truncate text-[12px] font-medium text-white">{displayName}</p>
                 <p className="truncate text-[10px] text-[#444444]">{footerSecondary}</p>
-              </div>
-              <ChevronUp className="h-3 w-3 text-[#555]" />
+                {(isBroker || isSeller || isNri || isInstSeller) && organizationId ? (
+                  <div className="mt-1 border-t border-[#2a2a2a]/80 pt-1">
+                    <p className="truncate text-[10px] font-medium leading-tight text-[#00C49A]" title={organizationName}>
+                      {organizationName}
+                    </p>
+                    <p
+                      className="truncate font-mono text-[9px] leading-tight text-[#666]"
+                      title={organizationId ?? undefined}
+                    >
+                      {organizationId}
+                    </p>
+                  </div>
+                ) : null}
+              </div>}
+              {isAdmin && adminCollapsed ? null : <ChevronUp className="h-3 w-3 text-[#555]" />}
             </button>
           </div>
         </aside>
 
-        <main className="h-screen flex-1 overflow-y-auto bg-[#0a0a0a] [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+        <main className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-[#0a0a0a] text-zinc-100 [color-scheme:dark] [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
           <div className="sticky top-0 z-30 border-b border-[#1a1a1a] bg-[#0a0a0a] px-4 py-3 md:hidden">
             <button
               type="button"
@@ -888,7 +1261,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </button>
             </div>
             <div className="ml-auto flex items-center gap-3 text-sm text-zinc-400">
-              {user && <span className="text-zinc-200">{user.role}</span>}
+              {sessionRole ? <span className="text-zinc-200">{sessionRole}</span> : null}
               {token ? (
                 <button
                   type="button"
@@ -905,7 +1278,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               )}
             </div>
           </header>
-          <main className="flex-1 p-6">{children}</main>
+          <main className="flex-1 bg-[#0a0a0a] p-6 text-zinc-100 [color-scheme:dark]">{children}</main>
         </div>
       </div>
     </div>

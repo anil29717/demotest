@@ -31,6 +31,7 @@ export function InstitutionalBuyerDashboardView() {
   const [institutions, setInstitutions] = useState<Inst[]>([]);
   const [requirements, setRequirements] = useState<Req[]>([]);
   const [compliance, setCompliance] = useState<ComplianceItem[]>([]);
+  const [ddPending, setDdPending] = useState(0);
   const now = new Date();
   const greeting = now.getHours() < 12 ? "Good morning" : now.getHours() < 17 ? "Good afternoon" : "Good evening";
 
@@ -40,16 +41,35 @@ export function InstitutionalBuyerDashboardView() {
     setLoading(true);
     void (async () => {
       try {
-        const [inst, reqs, comp] = await Promise.all([
-          apiFetch<Inst[]>("/institutions", { token }).catch(() => []),
+        const [inst, reqs, comp, deals] = await Promise.all([
+          apiFetch<Inst[]>("/institutions/me", { token }).catch(() => []),
           apiFetch<Req[]>("/requirements/mine", { token }).catch(() => []),
           apiFetch<{ items?: ComplianceItem[] } | ComplianceItem[]>("/compliance/feed", { token }).catch(() => []),
+          apiFetch<{ id: string }[]>("/deals", { token }).catch(() => []),
         ]);
         const items = Array.isArray(comp) ? comp : comp.items ?? [];
+        const ddRows = await Promise.all(
+          (Array.isArray(deals) ? deals : []).slice(0, 20).map((d) =>
+            apiFetch<{ status?: string; items?: { required?: boolean; done?: boolean; status?: string }[] }>(
+              `/dd/deal/${d.id}/checklist`,
+              { token },
+            ).catch(() => ({ items: [] })),
+          ),
+        );
+        const pendingDd = ddRows.reduce((sum, row) => {
+          const requiredOpen =
+            row.items?.filter(
+              (i) =>
+                i.required !== false &&
+                !(i.done || String(i.status ?? "").toUpperCase() === "COMPLETED"),
+            ).length ?? 0;
+          return sum + requiredOpen;
+        }, 0);
         if (!cancelled) {
           setInstitutions(Array.isArray(inst) ? inst : []);
           setRequirements(Array.isArray(reqs) ? reqs : []);
           setCompliance(items);
+          setDdPending(pendingDd);
         }
       } catch (e) {
         if (!cancelled) {
@@ -114,7 +134,11 @@ export function InstitutionalBuyerDashboardView() {
           label="Acquisition targets"
           value={requirements.length}
           iconClassName="text-[#00C49A]"
-          subtext={<span className="text-[#888888]">Posted by your team</span>}
+          subtext={
+            <span className="text-[#888888]">
+              Posted by your team · DD pending {ddPending}
+            </span>
+          }
         />
         <StatCard
           icon={ShieldCheck}

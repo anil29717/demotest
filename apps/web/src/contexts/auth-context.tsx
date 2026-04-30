@@ -6,9 +6,11 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { apiFetch } from "@/lib/api";
+import { decodeJwtRole } from "@/lib/jwt-client";
 
 export type UserProfile = {
   id: string;
@@ -23,6 +25,8 @@ type AuthContextValue = {
   token: string | null;
   ready: boolean;
   user: UserProfile | null;
+  /** Role for navigation and access: from profile when loaded, else from JWT (so the shell works if /user/profile is slow or fails). */
+  sessionRole: string | null;
   setToken: (t: string | null) => void;
   refreshProfile: () => Promise<void>;
   logout: () => void;
@@ -37,6 +41,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setTokenState] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [user, setUser] = useState<UserProfile | null>(null);
+  const profileInFlight = useRef<Promise<void> | null>(null);
 
   const setToken = useCallback((t: string | null) => {
     setTokenState(t);
@@ -53,14 +58,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const refreshProfile = useCallback(async () => {
     if (!token) {
       setUser(null);
+      profileInFlight.current = null;
       return;
     }
-    try {
-      const p = await apiFetch<UserProfile>("/user/profile", { token });
-      setUser(p);
-    } catch {
-      setUser(null);
-    }
+    if (profileInFlight.current) return profileInFlight.current;
+
+    const done = apiFetch<UserProfile>("/user/profile", { token })
+      .then((p) => setUser(p))
+      .catch(() => setUser(null))
+      .then(() => undefined);
+
+    profileInFlight.current = done.finally(() => {
+      profileInFlight.current = null;
+    });
+
+    return profileInFlight.current;
   }, [token]);
 
   useEffect(() => {
@@ -82,9 +94,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
   }, [setToken]);
 
+  const sessionRole = useMemo(
+    () => (user?.role && user.role.trim().length > 0 ? user.role : decodeJwtRole(token)),
+    [user?.role, token],
+  );
+
   const value = useMemo(
-    () => ({ token, ready, user, setToken, refreshProfile, logout }),
-    [token, ready, user, setToken, refreshProfile, logout],
+    () => ({ token, ready, user, sessionRole, setToken, refreshProfile, logout }),
+    [token, ready, user, sessionRole, setToken, refreshProfile, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

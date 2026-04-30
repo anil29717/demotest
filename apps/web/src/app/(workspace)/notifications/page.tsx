@@ -9,12 +9,21 @@ import { apiFetch } from "@/lib/api";
 import { timeAgo } from "@/lib/format";
 import { PageSkeleton } from "@/components/ui/skeleton";
 
+type NotificationType = "MATCH" | "NDA" | "DEAL" | "ALERT";
+
 type N = {
   id: string;
+  type: NotificationType;
   title: string;
   body: string;
   read: boolean;
   createdAt: string;
+};
+
+type NotificationsListResponse = {
+  data: N[];
+  total: number;
+  hasMore: boolean;
 };
 
 export default function NotificationsPage() {
@@ -26,9 +35,11 @@ export default function NotificationsPage() {
     queryKey: ["notifications", token],
     enabled: Boolean(token),
     queryFn: () =>
-      apiFetch<N[]>("/notifications?limit=50", { token: token ?? undefined }).catch(
-        () => [],
-      ),
+      apiFetch<NotificationsListResponse>("/notifications?limit=50", {
+        token: token ?? undefined,
+      })
+        .then((r) => r.data ?? [])
+        .catch(() => [] as N[]),
     staleTime: 1000 * 30,
   });
 
@@ -40,7 +51,7 @@ export default function NotificationsPage() {
 
   async function markAllRead() {
     if (!token) return;
-    await Promise.all(items.filter((n) => !n.read).map((n) => apiFetch(`/notifications/${n.id}/read`, { method: "PUT", token })));
+    await apiFetch("/notifications/read-all", { method: "PUT", token });
     await queryClient.invalidateQueries({ queryKey: ["notifications"] });
   }
 
@@ -74,12 +85,11 @@ export default function NotificationsPage() {
       <ul className="mt-6 space-y-3">
         {items
           .filter((n) => {
-            const title = n.title.toLowerCase();
             if (tab === "all") return true;
-            if (tab === "matches") return title.includes("match");
-            if (tab === "deals") return title.includes("deal");
-            if (tab === "compliance") return title.includes("compliance");
-            return !title.includes("match") && !title.includes("deal") && !title.includes("compliance");
+            if (tab === "matches") return n.type === "MATCH";
+            if (tab === "deals") return n.type === "DEAL";
+            if (tab === "compliance") return n.type === "NDA";
+            return n.type === "ALERT";
           })
           .map((n) => (
           <li
@@ -88,6 +98,7 @@ export default function NotificationsPage() {
               n.read ? "border-zinc-800 bg-zinc-900/20" : "border-l-2 border-l-[#00C49A] border-zinc-800 bg-zinc-900/40"
             }`}
           >
+            <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-600">{n.type}</p>
             <p className="font-medium">{n.title}</p>
             <p className="text-zinc-400">{n.body}</p>
             <p className="mt-1 text-xs text-zinc-600">{timeAgo(n.createdAt)}</p>

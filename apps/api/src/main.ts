@@ -38,6 +38,7 @@ async function bootstrap() {
   );
   const origins = (
     process.env.SOCKET_CORS_ORIGIN ??
+    process.env.CORS_ORIGIN ??
     process.env.FRONTEND_URL ??
     'http://localhost:3000'
   )

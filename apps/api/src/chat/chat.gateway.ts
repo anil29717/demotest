@@ -24,6 +24,7 @@ import { ChatService } from './chat.service';
   cors: {
     origin: (
       process.env.SOCKET_CORS_ORIGIN ??
+      process.env.CORS_ORIGIN ??
       process.env.NEXT_PUBLIC_SITE_URL ??
       process.env.FRONTEND_URL ??
       'http://localhost:3000'
